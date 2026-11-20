@@ -1,182 +1,251 @@
-// Combat — a pistol with ammo and a reload, a punch for up close, and
-// enemies who shoot back. Bullets are simple fast circles; everything
-// they hit is checked here.
+// Combat: the pistol, the punch, enemy shooters and bullets.
+import { CFG } from './config.js';
+import { pointInRect } from './world.js';
+import { damagePlayer } from './vehicles.js';
+import { addWanted } from './police.js';
+import { sfx } from './audio.js';
 
-import { CONFIG } from './config.js';
-import { pointInBuilding, collideCircle } from './world.js';
-import { hurtPlayer } from './player.js';
-import { scarePeds } from './traffic.js';
+export function makeBullet(x, y, angle, speed, from, dmg) {
+  return {
+    x, y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    life: 0.9,
+    from, // 'player' | 'enemy'
+    dmg,
+  };
+}
+
+// Line of sight: sample the segment; blocked if any sample is in a building.
+export function losClear(world, x0, y0, x1, y1) {
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  const steps = Math.max(1, Math.ceil(d / 18));
+  for (let i = 1; i < steps; i++) {
+    const x = x0 + ((x1 - x0) * i) / steps;
+    const y = y0 + ((y1 - y0) * i) / steps;
+    for (const b of world.buildings) {
+      if (pointInRect(x, y, b)) return false;
+    }
+  }
+  return true;
+}
 
 export function spawnEnemy(G, x, y) {
-  const enemy = {
+  const e = {
     x, y,
-    angle: 0,
-    health: CONFIG.enemyHealth,
-    shootCooldown: G.rng.range(0.5, 1.5),
+    hp: 60,
+    angle: G.rng.range(0, Math.PI * 2),
+    shootCd: G.rng.range(0.6, 1.4),
     strafeDir: G.rng.chance(0.5) ? 1 : -1,
-    strafeTime: 0,
-    dead: false,
-    walkPhase: 0,
+    strafeT: G.rng.range(1, 2.5),
+    color: '#7b2d26',
+    flash: 0,
   };
-  G.enemies.push(enemy);
-  return enemy;
+  G.enemies.push(e);
+  return e;
 }
 
-export function playerShoot(G) {
-  const player = G.player;
-  if (player.inCar || player.reloading > 0 || G.state !== 'playing') return;
-  if (player.ammo <= 0) {
-    player.reloading = CONFIG.pistolReload;
+export function tryShoot(G) {
+  const P = G.player;
+  if (G.mode !== 'playing' || !P.onFoot) return;
+  if (!G.input.mousePressed && !G.input.mouseDown) return;
+  if (P.gun.cd > 0 || P.gun.reloading > 0) return;
+  if (P.gun.ammo <= 0) {
+    P.gun.reloading = CFG.RELOAD_TIME;
     return;
   }
-  player.ammo--;
-  const angle = player.angle + (G.rng.next() - 0.5) * 0.05;
-  G.bullets.push({
-    x: player.x + Math.cos(angle) * 20,
-    y: player.y + Math.sin(angle) * 20,
-    vx: Math.cos(angle) * CONFIG.bulletSpeed,
-    vy: Math.sin(angle) * CONFIG.bulletSpeed,
-    from: 'player',
-    damage: CONFIG.pistolDamage,
-    life: CONFIG.pistolRange / CONFIG.bulletSpeed,
+  P.gun.cd = 0.16;
+  P.gun.ammo--;
+  const a = P.aimAngle + (Math.random() - 0.5) * 0.05;
+  const bx = P.x + Math.cos(a) * 24;
+  const by = P.y + Math.sin(a) * 24;
+  G.bullets.push(makeBullet(bx, by, a, CFG.BULLET_SPEED, 'player', 34));
+  G.lastShot = { x: P.x, y: P.y, t: G.time };
+  // Firing in public is a crime, but not every single shot.
+  if (G.crimeCd <= 0) {
+    addWanted(G, 1);
+    G.crimeCd = 6;
+  }
+  sfx(G.audio, 'shot');
+  G.particles.push({
+    x: bx, y: by, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60,
+    life: 0.08, maxLife: 0.08, color: '#ffd76a', size: 7,
   });
-  G.addMuzzle(player.x + Math.cos(angle) * 24, player.y + Math.sin(angle) * 24);
-  G.audio.sfx('shoot');
-  G.addHeat(CONFIG.heatPerShot, 'fired a shot');
-  scarePeds(G, player.x, player.y, 420);
-  if (player.ammo <= 0) player.reloading = CONFIG.pistolReload;
 }
 
-export function playerPunch(G) {
-  const player = G.player;
-  if (player.inCar || player.punchCooldown > 0 || G.state !== 'playing') return;
-  player.punchCooldown = 0.45;
-  G.audio.sfx('punch');
-  const reach = CONFIG.punchRange + 14;
-  const px = player.x + Math.cos(player.angle) * reach;
-  const py = player.y + Math.sin(player.angle) * reach;
-  // Enemies first.
-  for (const enemy of G.enemies) {
-    if (enemy.dead) continue;
-    if (Math.hypot(enemy.x - px, enemy.y - py) < 30) {
-      damageEnemy(G, enemy, CONFIG.punchDamage);
-      enemy.x += Math.cos(player.angle) * 18;
-      enemy.y += Math.sin(player.angle) * 18;
-      return;
+export function punch(G) {
+  const P = G.player;
+  const range = 58;
+  const arc = 0.75;
+  let hitAny = false;
+  const hitAt = (x, y, r) => {
+    const d = Math.hypot(x - P.x, y - P.y);
+    if (d > range + r) return false;
+    let diff = Math.atan2(y - P.y, x - P.x) - P.aimAngle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    return Math.abs(diff) < arc;
+  };
+  for (const e of G.enemies) {
+    if (hitAt(e.x, e.y, 16)) {
+      damageEnemy(G, e, 25, Math.cos(P.aimAngle) * 260, Math.sin(P.aimAngle) * 260);
+      hitAny = true;
     }
   }
-  // Then pedestrians (rude, and the city notices if a cop sees it).
   for (const ped of G.peds) {
-    if (ped.state === 'down') continue;
-    if (Math.hypot(ped.x - px, ped.y - py) < 28) {
-      ped.state = 'down';
-      ped.downTime = 3;
-      G.addHeat(0.4, 'punched a pedestrian');
-      return;
+    if (!ped.down && hitAt(ped.x, ped.y, 12)) {
+      ped.down = true;
+      ped.downTimer = 5;
+      addWanted(G, 1);
+      hitAny = true;
+    }
+  }
+  if (hitAny) sfx(G.audio, 'punch');
+  G.particles.push({
+    x: P.x + Math.cos(P.aimAngle) * 40,
+    y: P.y + Math.sin(P.aimAngle) * 40,
+    vx: 0, vy: 0, life: 0.12, maxLife: 0.12, color: '#ffffff', size: 10,
+  });
+}
+
+export function damageEnemy(G, e, dmg, kx, ky) {
+  e.hp -= dmg;
+  e.flash = 0.12;
+  if (kx !== undefined) {
+    e.x += kx * 0.06;
+    e.y += ky * 0.06;
+  }
+  if (e.hp <= 0) {
+    const idx = G.enemies.indexOf(e);
+    if (idx >= 0) G.enemies.splice(idx, 1);
+    G.stats.kills++;
+    G.money += 100;
+    G.stats.earned += 100;
+    for (let i = 0; i < 14; i++) {
+      const a = G.rng.range(0, Math.PI * 2);
+      const sp = G.rng.range(40, 220);
+      G.particles.push({
+        x: e.x, y: e.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: G.rng.range(0.3, 0.7), maxLife: 0.7, color: '#c0392b', size: 4,
+      });
+    }
+    sfx(G.audio, 'cash');
+  }
+}
+
+// Enemies stand their ground, strafe a little, and shoot when they
+// can see you (line of sight past the buildings).
+export function stepEnemies(G, dt) {
+  const P = G.player;
+  for (const e of G.enemies) {
+    if (e.flash > 0) e.flash -= dt;
+    const dx = P.x - e.x;
+    const dy = P.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    e.angle = Math.atan2(dy, dx);
+    e.strafeT -= dt;
+    if (e.strafeT <= 0) {
+      e.strafeT = G.rng.range(1, 2.5);
+      e.strafeDir *= -1;
+    }
+    if (dist < 460 && dist > 90) {
+      const px = -Math.sin(e.angle) * e.strafeDir * 42 * dt;
+      const py = Math.cos(e.angle) * e.strafeDir * 42 * dt;
+      const res = { x: e.x + px, y: e.y + py };
+      e.x = res.x;
+      e.y = res.y;
+    }
+    e.shootCd -= dt;
+    if (e.shootCd <= 0 && dist < 460 && losClear(G.world, e.x, e.y, P.x, P.y)) {
+      e.shootCd = G.rng.range(1.1, 1.7);
+      const spread = (G.rng.next() - 0.5) * 0.22;
+      const a = e.angle + spread;
+      G.bullets.push(makeBullet(
+        e.x + Math.cos(a) * 22, e.y + Math.sin(a) * 22,
+        a, CFG.ENEMY_BULLET_SPEED, 'enemy', 8,
+      ));
+      sfx(G.audio, 'enemyShot');
+      G.particles.push({
+        x: e.x + Math.cos(a) * 26, y: e.y + Math.sin(a) * 26,
+        vx: 0, vy: 0, life: 0.07, maxLife: 0.07, color: '#ffd76a', size: 6,
+      });
     }
   }
 }
 
-export function damageEnemy(G, enemy, amount) {
-  enemy.health -= amount;
-  G.addBlood(enemy.x, enemy.y);
-  if (enemy.health <= 0 && !enemy.dead) {
-    enemy.dead = true;
-    G.player.money += 25;
-    G.addBurst(enemy.x, enemy.y, '#e74c3c', 14);
-    G.audio.sfx('punch');
-  }
-}
-
-// ---- Bullets and enemy brains ----
-
-export function updateBullets(G, dt) {
-  for (const b of G.bullets) {
+export function stepBullets(G, dt) {
+  for (const b of G.bullets.slice()) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.life -= dt;
-    if (b.life <= 0) { b.dead = true; continue; }
-    if (pointInBuilding(G.world, b.x, b.y)) {
-      G.addSpark(b.x, b.y);
-      b.dead = true;
-      continue;
+    let dead = b.life <= 0;
+    if (!dead) {
+      // Buildings stop bullets with a spark.
+      for (const rect of G.world.buildings) {
+        if (pointInRect(b.x, b.y, rect)) {
+          dead = true;
+          G.particles.push({
+            x: b.x, y: b.y, vx: 0, vy: 0, life: 0.15, maxLife: 0.15, color: '#f2c14e', size: 4,
+          });
+          break;
+        }
+      }
     }
-    if (b.from === 'player') {
-      for (const enemy of G.enemies) {
-        if (enemy.dead) continue;
-        if (Math.hypot(enemy.x - b.x, enemy.y - b.y) < 16) {
-          damageEnemy(G, enemy, b.damage);
-          b.dead = true;
+    if (!dead && b.from === 'player') {
+      for (const e of G.enemies.slice()) {
+        if (Math.hypot(e.x - b.x, e.y - b.y) < 17) {
+          damageEnemy(G, e, b.dmg, b.vx * 0.35, b.vy * 0.35);
+          dead = true;
           break;
         }
       }
-      if (b.dead) continue;
+    }
+    if (!dead && b.from === 'player') {
       for (const ped of G.peds) {
-        if (ped.state === 'down') continue;
-        if (Math.hypot(ped.x - b.x, ped.y - b.y) < 12) {
-          ped.state = 'down';
-          ped.downTime = 5;
-          G.addHeat(0.8, 'shot a pedestrian');
-          b.dead = true;
+        if (!ped.down && Math.hypot(ped.x - b.x, ped.y - b.y) < 13) {
+          ped.down = true;
+          ped.downTimer = 5;
+          addWanted(G, 1);
+          dead = true;
           break;
         }
       }
-    } else {
-      // Enemy bullets only threaten the player on foot.
-      const player = G.player;
-      if (!player.inCar && Math.hypot(player.x - b.x, player.y - b.y) < 14) {
-        hurtPlayer(G, b.damage);
-        b.dead = true;
+    }
+    if (!dead && b.from === 'player') {
+      for (const car of G.cars) {
+        if (car.kind === 'police' && Math.hypot(car.x - b.x, car.y - b.y) < 24) {
+          addWanted(G, 1);
+          dead = true;
+          break;
+        }
       }
+    }
+    if (!dead && b.from === 'enemy') {
+      const P = G.player;
+      if (Math.hypot(P.x - b.x, P.y - b.y) < 15) {
+        damagePlayer(G, b.dmg, 'shot');
+        dead = true;
+      }
+    }
+    if (dead) {
+      const i = G.bullets.indexOf(b);
+      if (i >= 0) G.bullets.splice(i, 1);
     }
   }
-  G.bullets = G.bullets.filter((b) => !b.dead);
 }
 
-export function updateEnemies(G, dt) {
-  const player = G.player;
-  for (const enemy of G.enemies) {
-    if (enemy.dead) continue;
-    const dx = player.x - enemy.x;
-    const dy = player.y - enemy.y;
-    const d = Math.hypot(dx, dy);
-    enemy.angle = Math.atan2(dy, dx);
-    // Close to shooting range, then strafe and fire.
-    if (d > CONFIG.enemyShootRange * 0.7) {
-      enemy.x += (dx / d) * 95 * dt;
-      enemy.y += (dy / d) * 95 * dt;
-      enemy.walkPhase += dt * 9;
-    } else {
-      enemy.strafeTime -= dt;
-      if (enemy.strafeTime <= 0) {
-        enemy.strafeDir *= -1;
-        enemy.strafeTime = G.rng.range(0.8, 1.8);
-      }
-      enemy.x += -Math.sin(enemy.angle) * enemy.strafeDir * 55 * dt;
-      enemy.y += Math.cos(enemy.angle) * enemy.strafeDir * 55 * dt;
-    }
-    const pos = { x: enemy.x, y: enemy.y };
-    collideCircle(G.world, pos, 12);
-    enemy.x = pos.x;
-    enemy.y = pos.y;
-
-    enemy.shootCooldown -= dt;
-    if (enemy.shootCooldown <= 0 && d < CONFIG.enemyShootRange && !player.inCar) {
-      enemy.shootCooldown = CONFIG.enemyShootInterval * G.rng.range(0.9, 1.3);
-      const spread = (G.rng.next() - 0.5) * 0.22;
-      const a = enemy.angle + spread;
-      G.bullets.push({
-        x: enemy.x + Math.cos(a) * 20,
-        y: enemy.y + Math.sin(a) * 20,
-        vx: Math.cos(a) * CONFIG.bulletSpeed * 0.85,
-        vy: Math.sin(a) * CONFIG.bulletSpeed * 0.85,
-        from: 'enemy',
-        damage: 9,
-        life: CONFIG.enemyShootRange / (CONFIG.bulletSpeed * 0.85),
-      });
-      G.addMuzzle(enemy.x + Math.cos(a) * 24, enemy.y + Math.sin(a) * 24);
-      G.audio.sfx('enemyShoot');
+export function stepParticles(G, dt) {
+  for (const p of G.particles.slice()) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 1 - 2.4 * dt;
+    p.vy *= 1 - 2.4 * dt;
+    p.life -= dt;
+    if (p.life <= 0) {
+      const i = G.particles.indexOf(p);
+      if (i >= 0) G.particles.splice(i, 1);
     }
   }
-  G.enemies = G.enemies.filter((e) => !e.dead);
+  for (const s of G.skids) s.life -= dt;
+  G.skids = G.skids.filter((s) => s.life > 0);
 }

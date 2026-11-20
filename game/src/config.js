@@ -1,110 +1,108 @@
-// Solmar City — all tuning numbers in one place.
-// Change a number here, change the feel of the game.
-
-export const CONFIG = {
-  // World
-  worldSize: 3600,
-  roadGap: 400, // distance between neighbouring avenues / streets
-  roadWidth: 96,
-  beachTop: 3220, // sand starts here
-  waterTop: 3420, // the sea starts here
-
-  // Camera + view
-  viewWidth: 1280,
-  viewHeight: 720,
-
-  // Player on foot
-  walkSpeed: 210,
-  runSpeed: 300,
-  playerRadius: 13,
-  playerHealth: 100,
-
-  // Cars
-  carLength: 46,
-  carWidth: 22,
-  carAccel: 320,
-  carBrake: 520,
-  carReverseAccel: 200,
-  carMaxSpeed: 560,
-  carMaxReverse: 160,
-  carTurn: 2.6, // radians per second at full lock, scaled by speed
-  carGrip: 4.2, // how fast sideways velocity is killed (higher = less drift)
-  carRadius: 18, // collision circle, slightly inside the body
-
-  // Traffic
-  trafficCars: 26,
-  trafficSpeed: 150,
-  pedestrians: 40,
-  pedSpeed: 55,
-
-  // Wanted / police
-  maxWanted: 5,
-  heatPerShot: 0.9,
-  heatPerSteal: 0.7,
-  heatPerPedHit: 1.4,
-  heatPerCopHit: 0.6,
-  heatDecay: 0.05, // per second while a cop can see the player
-  heatDecayHidden: 0.22, // per second while no cop is near
-  copSpawnInterval: 4.0,
-  maxCops: 8,
-  copSpeed: 500,
-  copRamDamage: 8,
-  sightRange: 520,
-
-  // Combat
-  pistolDamage: 34,
-  pistolRange: 420,
-  pistolAmmo: 12,
-  pistolReload: 1.1,
-  punchDamage: 18,
-  punchRange: 34,
-  bulletSpeed: 900,
-  enemyHealth: 60,
-  enemyShootRange: 380,
-  enemyShootInterval: 1.4,
-
-  // Missions
-  missionRewards: [200, 400, 600, 1000],
-  taxiFareBase: 60,
-  packageValue: 100,
-  packagesTotal: 10,
-
-  // Clock
-  clockStartMinutes: 10 * 60, // 10:00
-  clockRate: 1.0, // game minutes per real second
-
-  // Minimap
-  minimapSize: 176,
-  minimapRange: 900, // world units shown across the minimap
+// Solmar City — shared constants and city geometry.
+// A sun-soaked coastal city: 9 avenues x 8 streets on a 340px pitch.
+export const CFG = {
+  WORLD_W: 3200,
+  WORLD_H: 2900,
+  ROAD_W: 68,
+  PITCH: 340,
+  AVE0: 170,
+  ST0: 170,
+  AVES: 9,
+  STS: 8,
+  BEACH_Y: 2720, // sand starts here (south edge)
+  WATER_Y: 2830, // sea starts here; the pier walks out over it
+  WALK_SPEED: 178,
+  RUN_SPEED: 0, // no sprint: on-foot speed is one honest pace
+  CAR_ACCEL: 430,
+  CAR_MAX: 540,
+  CAR_REV: 210,
+  CAR_TURN: 2.6,
+  CAR_GRIP: 3.2,
+  HANDBRAKE_GRIP: 0.55,
+  BULLET_SPEED: 920,
+  ENEMY_BULLET_SPEED: 640,
+  PISTOL_MAG: 12,
+  RELOAD_TIME: 1.15,
+  WANTED_DECAY_S: 14,
+  TAXI_COOLDOWN_S: 22,
+  SAVE_KEY: 'solmar-city-save-v1',
 };
 
-// Solmar City palette — one sun-soaked coastal city, drawn flat.
-export const PALETTE = {
-  grass: '#7fae5a',
-  grassDark: '#74a24f',
-  sand: '#e8d29a',
-  water: '#2e7fa8',
-  waterDeep: '#256b8f',
-  asphalt: '#3a3f46',
-  asphaltEdge: '#2c3036',
-  lane: '#d8c95c',
-  sidewalk: '#b9b3a4',
-  building: ['#c96f4a', '#4a7a96', '#d9a441', '#8a6fae', '#5d8a6a', '#b0525e', '#6b7f8f'],
-  roof: '#00000022',
-  park: '#5d9b4a',
-  tree: '#3f7a34',
-  treeLight: '#5aa347',
-  carColors: ['#c0392b', '#2980b9', '#f1c40f', '#ecf0f1', '#2c3e50', '#e67e22', '#8e44ad', '#16a085'],
-  police: '#1e3a5f',
-  player: '#e74c3c',
-  playerShirt: '#f39c12',
-  pedShirts: ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c', '#ecf0f1'],
-  marker: '#ffd23f',
-  markerEdge: '#b8860b',
-  hudBg: 'rgba(10, 14, 20, 0.62)',
-  hudText: '#ffffff',
-  star: '#ffd23f',
-  starEmpty: 'rgba(255, 255, 255, 0.35)',
-  health: '#2ecc71',
-  healthLow: '#e74c3c',
+// Avenue / street centre lines (world pixels).
+export const AVE_X = (i) => CFG.AVE0 + i * CFG.PITCH;
+export const ST_Y = (j) => CFG.ST0 + j * CFG.PITCH;
+
+// Right-hand lane offset for a vehicle travelling along a road.
+export function laneOffset(dir) {
+  return dir > 0 ? 17 : -17;
+}
+
+export const PAL = {
+  grass: '#5d7a4a',
+  grassDry: '#7d8a52',
+  road: '#3b4048',
+  roadLine: '#d8c95a',
+  sidewalk: '#8d8578',
+  sand: '#d9c08a',
+  water: '#2e6f8e',
+  waterDeep: '#1f4f68',
+  park: '#4c7a3f',
+  tree: '#2f5d2a',
+  roofA: '#b5543c',
+  roofB: '#4a6b8a',
+  roofC: '#8a6b3f',
+  roofD: '#6b4a6b',
+  roofE: '#3f7a6b',
+  wall: '#c9bda6',
+  pier: '#8a6b4a',
+  gold: '#f2c14e',
+  white: '#f2efe6',
 };
+
+// Car paint jobs (body colours).
+export const CAR_COLORS = [
+  '#c0392b', '#2471a3', '#f1c40f', '#7d3c98', '#16a085',
+  '#e67e22', '#95a5a6', '#2c3e50', '#d35400', '#27ae60',
+];
+
+export const PED_COLORS = [
+  '#e74c3c', '#3498db', '#f39c12', '#9b59b6', '#1abc9c',
+  '#ecf0f1', '#fd79a8', '#00cec9', '#ffeaa7', '#6c5ce7',
+];
+
+// Five named landmarks, placed on the map by hand.
+export const LANDMARKS = [
+  { name: "Mara's Garage", kind: 'garage', x: 590, y: 930, w: 200, h: 130, frontX: 690, frontY: 1085 },
+  { name: 'Plaza del Sol', kind: 'plaza', x: 1564, y: 1224, w: 272, h: 272, frontX: 1700, frontY: 1360 },
+  { name: 'The Meridian', kind: 'hotel', x: 2290, y: 590, w: 180, h: 180, frontX: 2380, frontY: 790 },
+  { name: 'Solmar Pier', kind: 'pier', x: 1560, y: 2720, w: 80, h: 180, frontX: 1600, frontY: 2860 },
+  { name: 'Dockside Yards', kind: 'docks', x: 2924, y: 1904, w: 242, h: 612, frontX: 3045, frontY: 2210 },
+];
+
+// Park blocks, as [block column, block row] between roads.
+export const PARK_BLOCKS = [
+  { c: 4, r: 3, name: 'Plaza del Sol' },
+  { c: 2, r: 5, name: 'Jacaranda Park' },
+  { c: 6, r: 4, name: 'Palm Court' },
+];
+
+// The rectangle of the city block between avenue i and i+1,
+// street j and j+1 (roads excluded, sidewalk margin kept).
+export function blockRect(i, j, margin) {
+  const m = margin === undefined ? 14 : margin;
+  const x0 = AVE_X(i) + CFG.ROAD_W / 2 + m;
+  const y0 = ST_Y(j) + CFG.ROAD_W / 2 + m;
+  const x1 = AVE_X(i + 1) - CFG.ROAD_W / 2 - m;
+  const y1 = ST_Y(j + 1) - CFG.ROAD_W / 2 - m;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+// Is this block a park or a landmark block? (No buildings there.)
+export function blockKind(i, j) {
+  for (const p of PARK_BLOCKS) if (p.c === i && p.r === j) return { kind: 'park', name: p.name };
+  if (i === 1 && j === 2) return { kind: 'landmark', name: "Mara's Garage" };
+  if (i === 6 && j === 1) return { kind: 'landmark', name: 'The Meridian' };
+  if (i === 8 && j === 5) return { kind: 'landmark', name: 'Dockside Yards' };
+  if (i === 8 && j === 6) return { kind: 'landmark', name: 'Dockside Yards' };
+  return { kind: 'buildings', name: '' };
+}

@@ -1,138 +1,103 @@
-// The wanted level — heat that rises with crime and falls when the
-// player lays low, and the police cars that answer it. Heat is a float
-// from 0 to 5; the stars the HUD shows are its ceiling.
+// Wanted level (0-5 stars) and the police cars that answer it.
+import { CFG, AVE_X, ST_Y } from './config.js';
+import { nearestRoadPoint } from './world.js';
+import { makeCar, stepCarDrive, collideCars, damagePlayer } from './vehicles.js';
+import { sfx } from './audio.js';
 
-import { CONFIG, PALETTE } from './config.js';
-import { createCar, moveCar } from './vehicles.js';
-import { randomRoadPoint } from './world.js';
-import { hurtPlayer } from './player.js';
-
-export function wantedStars(G) {
-  if (G.heat <= 0.05) return 0;
-  return Math.min(CONFIG.maxWanted, Math.ceil(G.heat));
+export function addWanted(G, n) {
+  const before = G.wanted;
+  G.wanted = Math.min(5, G.wanted + n);
+  G.lastCrimeT = G.time;
+  G.wantedDecayT = 0;
+  if (G.wanted > before) sfx(G.audio, 'wantedUp');
 }
 
-export function addHeat(G, amount, reason) {
-  if (G.state !== 'playing') return;
-  const before = wantedStars(G);
-  G.heat = Math.min(CONFIG.maxWanted, G.heat + amount);
-  G.lastCrimeAt = G.elapsed;
-  const after = wantedStars(G);
-  if (after > before) {
-    G.audio.sfx('wantedUp');
-    G.say(`Wanted level ${after} star${after > 1 ? 's' : ''} — ${reason}.`);
-  }
-  if (after > G.stats.bestWanted) G.stats.bestWanted = after;
+export function spawnCop(G) {
+  const P = G.player;
+  // Spawn on a road a little way from the player, out of sight if possible.
+  const spot = nearestRoadPoint(G.rng, P.x + G.rng.range(-500, 500), P.y + G.rng.range(-500, 500));
+  const cop = makeCar(G, spot.x, spot.y, G.rng.range(0, Math.PI * 2), '#22395e', 'police');
+  cop.driver = 'police';
+  cop.ramCd = 0;
+  cop.sirenPhase = G.rng.range(0, 1);
+  G.cars.push(cop);
+  G.cops.push(cop);
+  return cop;
 }
 
-function spawnCopCar(G) {
-  // Appear on a road a little way off, never on top of the player.
-  let point = randomRoadPoint(G.world, G.rng);
-  let tries = 0;
-  while (Math.hypot(point.x - G.player.x, point.y - G.player.y) < 600 && tries < 12) {
-    point = randomRoadPoint(G.world, G.rng);
-    tries++;
-  }
-  const angle = Math.atan2(G.player.y - point.y, G.player.x - point.x);
-  const car = createCar(point.x, point.y, angle, {
-    color: PALETTE.police,
-    driver: 'cop',
-    police: true,
-    type: 'sedan',
-  });
-  car.speed = CONFIG.copSpeed;
-  car.stuckTime = 0;
-  G.cars.push(car);
-  G.cops.push(car);
-  return car;
-}
-
-export function updateWanted(G, dt) {
-  const stars = wantedStars(G);
-  // Heat falls slowly while police are near, faster while hidden.
-  const anyCopNear = G.cops.some((c) => Math.hypot(c.x - G.player.x, c.y - G.player.y) < CONFIG.sightRange);
-  const recentCrime = G.elapsed - G.lastCrimeAt < 6;
-  if (!recentCrime) {
-    G.heat = Math.max(0, G.heat - (anyCopNear ? CONFIG.heatDecay : CONFIG.heatDecayHidden) * dt);
-  }
-  // Spawn police to match the heat (not in a staged screenshot scene).
-  G.copSpawnTimer -= dt;
-  const want = Math.min(CONFIG.maxCops, stars * 2);
-  if (stars >= 1 && G.cops.length < want && G.copSpawnTimer <= 0 && !G.shotMode) {
-    spawnCopCar(G);
-    G.copSpawnTimer = CONFIG.copSpawnInterval;
-  }
-  // When the heat is gone, the cops leave.
-  if (stars === 0) {
-    for (const cop of G.cops) cop.leaving = true;
-  }
-}
-
-// ---- Police driving ----
-
-export function updatePolice(G, dt) {
-  const player = G.player;
+// Remove every cruiser (used on respawn and on mission reset).
+export function clearCops(G) {
   for (const cop of G.cops) {
-    if (cop.leaving) {
-      // Drive away from the player and despawn at distance.
-      const dx = cop.x - player.x;
-      const dy = cop.y - player.y;
-      const d = Math.hypot(dx, dy) || 1;
-      steerCarToward(G, cop, cop.x + (dx / d) * 400, cop.y + (dy / d) * 400, dt, CONFIG.copSpeed * 0.8);
-      if (d > 1200) {
-        cop.dead = true;
+    const ci = G.cars.indexOf(cop);
+    if (ci >= 0) G.cars.splice(ci, 1);
+  }
+  G.cops.length = 0;
+}
+
+// Stars as a string for the HUD: filled and empty.
+export function wantedStars(G) {
+  let s = '';
+  for (let i = 0; i < 5; i++) s += i < G.wanted ? '★' : '☆';
+  return s;
+}
+
+export function stepPolice(G, dt) {
+  const P = G.player;
+  // Reinforcements: up to two cruisers per star, eight at most.
+  const want = Math.min(G.wanted * 2, 8);
+  if (G.cops.length < want && G.time - (G.lastCopSpawn || 0) > 1.2) {
+    G.lastCopSpawn = G.time;
+    spawnCop(G);
+  }
+  // No wanted level: the cruisers drift off and despawn.
+  if (G.wanted === 0) {
+    for (const cop of G.cops.slice()) {
+      const d = Math.hypot(cop.x - P.x, cop.y - P.y);
+      if (d > 800) {
+        G.cops.splice(G.cops.indexOf(cop), 1);
+        const ci = G.cars.indexOf(cop);
+        if (ci >= 0) G.cars.splice(ci, 1);
       }
-      continue;
     }
-
-    // Chase the player — by car, or on foot.
-    steerCarToward(G, cop, player.x, player.y, dt, CONFIG.copSpeed);
-
-    // Ramming the player's car hurts the player.
-    if (player.inCar) {
-      const d = Math.hypot(cop.x - player.inCar.x, cop.y - player.inCar.y);
-      const closing = Math.hypot(cop.vx - player.inCar.vx, cop.vy - player.inCar.vy);
-      if (d < CONFIG.carRadius * 2 + 6 && closing > 180 && player.hurtCooldown <= 0) {
-        hurtPlayer(G, CONFIG.copRamDamage);
-        player.hurtCooldown = 0.8;
-        G.shake = Math.min(14, G.shake + 7);
-        G.audio.sfx('crash');
+  }
+  for (const cop of G.cops) {
+    if (cop.ramCd > 0) cop.ramCd -= dt;
+    const dx = P.x - cop.x;
+    const dy = P.y - cop.y;
+    const dist = Math.hypot(dx, dy);
+    const desired = Math.atan2(dy, dx);
+    let diff = desired - cop.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const steer = Math.max(-1, Math.min(1, diff * 2.2));
+    // Cops drive flat out; they ease off only when right on top of you.
+    const throttle = dist > 60 ? 1 : 0.4;
+    stepCarDrive(G, cop, dt, throttle, steer, false);
+    collideCars(G, cop, dt);
+    // Ram: a close cop bumps you and hurts.
+    if (dist < 52 && cop.ramCd <= 0) {
+      cop.ramCd = 0.9;
+      cop.speed *= 0.4;
+      G.cam.shake = Math.max(G.cam.shake, 8);
+      sfx(G.audio, 'crash');
+      if (P.car) {
+        damagePlayer(G, 5, 'rammed');
+      } else {
+        damagePlayer(G, 9, 'rammed');
       }
     }
-
-    // Stuck against a wall? Reverse out, then try again.
-    const speed = Math.hypot(cop.vx, cop.vy);
-    if (speed < 30) {
-      cop.stuckTime += dt;
-      if (cop.stuckTime > 2.5) {
-        cop.x -= Math.cos(cop.angle) * 40;
-        cop.y -= Math.sin(cop.angle) * 40;
-        cop.angle += Math.PI * 0.6;
-        cop.stuckTime = 0;
+  }
+  // Wanted decays when you lay low: no crime lately, no cop close.
+  if (G.wanted > 0) {
+    const copNear = G.cops.some((c) => Math.hypot(c.x - P.x, c.y - P.y) < 340);
+    if (G.time - G.lastCrimeT > 8 && !copNear) {
+      G.wantedDecayT += dt;
+      if (G.wantedDecayT >= CFG.WANTED_DECAY_S) {
+        G.wantedDecayT = 0;
+        G.wanted = Math.max(0, G.wanted - 1);
       }
     } else {
-      cop.stuckTime = 0;
+      G.wantedDecayT = 0;
     }
   }
-  G.cops = G.cops.filter((c) => !c.dead);
-  G.cars = G.cars.filter((c) => !c.dead);
-}
-
-// Steer a car toward a point with a limited turn rate, at a target speed
-// (a staged chase can cap the speed with car.chaseSpeed).
-export function steerCarToward(G, car, tx, ty, dt, speed) {
-  const topSpeed = car.chaseSpeed || speed;
-  const dx = tx - car.x;
-  const dy = ty - car.y;
-  const targetAngle = Math.atan2(dy, dx);
-  let diff = targetAngle - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  const turnRate = 3.0;
-  car.angle += Math.max(-turnRate * dt, Math.min(turnRate * dt, diff));
-  const align = Math.cos(diff);
-  const targetSpeed = align > 0.2 ? topSpeed : topSpeed * 0.4;
-  car.vx = Math.cos(car.angle) * targetSpeed;
-  car.vy = Math.sin(car.angle) * targetSpeed;
-  moveCar(G, car, dt);
 }

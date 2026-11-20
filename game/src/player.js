@@ -1,120 +1,163 @@
-// Rio Vega — the player. On foot he walks and runs, aims with the mouse,
-// and steps into any car with E. In a car he IS the car: his position
-// follows it and his health takes the bumps.
+// Rio Vega, the player: on foot and behind the wheel.
+import { CFG } from './config.js';
+import { resolveCircle } from './world.js';
+import { nearestCar, stepCarDrive, collideCars, damagePlayer } from './vehicles.js';
+import { moveAxis, keyPressed, keyDown } from './input.js';
+import { sfx } from './audio.js';
+import { punch } from './combat.js';
+import { addWanted } from './police.js';
 
-import { CONFIG } from './config.js';
-import { collideCircle, clampToWorld, isWater } from './world.js';
-import { nearestCar, enterCar, exitCar } from './vehicles.js';
-
-export function createPlayer(x, y, saveData) {
+export function makePlayer(G) {
   return {
-    x, y,
-    angle: -Math.PI / 2, // facing up (north)
-    health: CONFIG.playerHealth,
-    money: saveData ? saveData.money : 250,
-    ammo: CONFIG.pistolAmmo,
-    reloading: 0,
-    inCar: null,
-    punchCooldown: 0,
-    hurtCooldown: 0,
-    walkPhase: 0, // drives the walk-cycle bob in the renderer
-    moving: false,
+    x: 690,
+    y: 1150, // outside Mara's Garage, on the street
+    angle: -Math.PI / 2,
+    hp: 100,
+    onFoot: true,
+    car: null,
+    aimAngle: 0,
+    gun: { ammo: CFG.PISTOL_MAG, reloading: 0, cd: 0 },
+    punchCd: 0,
+    invuln: 0,
+    walkPhase: 0,
   };
 }
 
-export function updatePlayerOnFoot(G, dt) {
-  const player = G.player;
+export function stepPlayer(G, dt) {
+  const P = G.player;
   const input = G.input;
-  const run = input.keys.ShiftLeft || input.keys.ShiftRight;
-  const speed = run ? CONFIG.runSpeed : CONFIG.walkSpeed;
-
-  let mx = 0;
-  let my = 0;
-  if (input.keys.KeyW || input.keys.ArrowUp) my -= 1;
-  if (input.keys.KeyS || input.keys.ArrowDown) my += 1;
-  if (input.keys.KeyA || input.keys.ArrowLeft) mx -= 1;
-  if (input.keys.KeyD || input.keys.ArrowRight) mx += 1;
-
-  player.moving = mx !== 0 || my !== 0;
-  if (player.moving) {
-    const len = Math.hypot(mx, my);
-    player.x += (mx / len) * speed * dt;
-    player.y += (my / len) * speed * dt;
-    player.walkPhase += dt * (run ? 11 : 8);
-  }
-
-  // Aim at the mouse.
-  player.angle = Math.atan2(G.input.aimY - player.y, G.input.aimX - player.x);
-
-  // The sea is a wall; the beach is fine.
-  if (isWater(G.world, player.x, player.y)) {
-    player.y = CONFIG.waterTop - CONFIG.playerRadius - 1;
-  }
-  clampToWorld(G.world, player, CONFIG.playerRadius);
-  const pos = { x: player.x, y: player.y };
-  collideCircle(G.world, pos, CONFIG.playerRadius);
-  player.x = pos.x;
-  player.y = pos.y;
-
-  if (player.punchCooldown > 0) player.punchCooldown -= dt;
-  if (player.hurtCooldown > 0) player.hurtCooldown -= dt;
-  if (player.reloading > 0) {
-    player.reloading -= dt;
-    if (player.reloading <= 0) player.ammo = CONFIG.pistolAmmo;
-  }
-}
-
-// ---- Getting in / out of cars, and getting hurt ----
-
-export function tryEnterExitCar(G) {
-  const player = G.player;
-  if (player.inCar) {
-    exitCar(G);
-    return;
-  }
-  const car = nearestCar(G, player.x, player.y, 52);
-  if (car) enterCar(G, car);
-}
-
-// Traffic that runs the player over hurts; the player is knocked clear.
-export function checkPlayerCarHits(G) {
-  const player = G.player;
-  if (player.inCar || player.hurtCooldown > 0) return;
-  for (const car of G.cars) {
-    if (car.dead || car.driver === 'player') continue;
-    const d = Math.hypot(car.x - player.x, car.y - player.y);
-    if (d < CONFIG.carRadius + CONFIG.playerRadius) {
-      const speed = Math.hypot(car.vx, car.vy);
-      if (speed > 60) {
-        const dmg = Math.min(30, 6 + speed * 0.03);
-        hurtPlayer(G, dmg);
-        // Knock the player sideways out of the road.
-        const dx = player.x - car.x;
-        const dy = player.y - car.y;
-        const len = Math.hypot(dx, dy) || 1;
-        player.x += (dx / len) * 46;
-        player.y += (dy / len) * 46;
-        G.audio.sfx('crash');
-        G.shake = Math.min(12, G.shake + 5);
-      }
+  if (P.invuln > 0) P.invuln -= dt;
+  if (P.gun.cd > 0) P.gun.cd -= dt;
+  if (P.punchCd > 0) P.punchCd -= dt;
+  if (P.gun.reloading > 0) {
+    P.gun.reloading -= dt;
+    if (P.gun.reloading <= 0) {
+      P.gun.ammo = CFG.PISTOL_MAG;
+      sfx(G.audio, 'reload');
     }
   }
+
+  if (P.car) {
+    stepPlayerCar(G, dt);
+    return;
+  }
+
+  // On foot: WASD moves, mouse aims when the pistol is out.
+  const axis = moveAxis(input);
+  const len = Math.hypot(axis.x, axis.y);
+  if (len > 0) {
+    const nx = axis.x / len;
+    const ny = axis.y / len;
+    const nx2 = P.x + nx * CFG.WALK_SPEED * dt;
+    const ny2 = P.y + ny * CFG.WALK_SPEED * dt;
+    const res = resolveCircle(G.world, nx2, ny2, 14);
+    P.x = res.x;
+    P.y = res.y;
+    P.walkPhase += dt * 9;
+    P.angle = Math.atan2(ny, nx);
+  }
+  // Aim follows the mouse.
+  const mw = G.mouseWorld;
+  P.aimAngle = Math.atan2(mw.y - P.y, mw.x - P.x);
+
+  // E: get into the nearest car.
+  if (keyPressed(input, 'KeyE')) {
+    const car = nearestCar(G, P.x, P.y, 62);
+    if (car) enterCar(G, car);
+  }
+  // F: punch. Mouse click: shoot (handled in combat.js via tryShoot).
+  if (keyPressed(input, 'KeyF') && P.punchCd <= 0) {
+    P.punchCd = 0.45;
+    punch(G);
+  }
+  // R: reload the pistol.
+  if (keyPressed(input, 'KeyR') && P.gun.reloading <= 0 && P.gun.ammo < CFG.PISTOL_MAG) {
+    P.gun.reloading = CFG.RELOAD_TIME;
+  }
 }
 
-export function hurtPlayer(G, amount) {
-  const player = G.player;
-  if (player.hurtCooldown > 0 || G.state !== 'playing') return;
-  player.health = Math.max(0, player.health - amount);
-  player.hurtCooldown = 0.6;
-  G.shake = Math.min(12, G.shake + 4);
-  if (player.health <= 0) {
-    G.state = 'dead';
-    G.audio.sfx('missionFail');
-    G.audio.engine(0, false);
-    G.audio.siren(false);
+function stepPlayerCar(G, dt) {
+  const P = G.player;
+  const car = P.car;
+  const input = G.input;
+  const axis = moveAxis(input);
+  // W/S (or Up/Down) is throttle, A/D is steering.
+  const throttle = -axis.y;
+  const steer = axis.x;
+  const handbrake = keyDown(input, 'Space');
+  stepCarDrive(G, car, dt, throttle, steer, handbrake);
+  // Car vs car bumps.
+  collideCars(G, car, dt);
+  // Hitting pedestrians while driving is a crime (and hurts them).
+  for (const ped of G.peds) {
+    if (ped.down) continue;
+    const d = Math.hypot(ped.x - car.x, ped.y - car.y);
+    if (d < 26 && Math.abs(car.speed) > 60) {
+      ped.down = true;
+      ped.downTimer = 4;
+      addWanted(G, 1);
+      sfx(G.audio, 'crash');
+      G.cam.shake = 7;
+    }
   }
+  // Sync the player to the car.
+  P.x = car.x;
+  P.y = car.y;
+  P.angle = car.angle;
+  P.aimAngle = car.angle;
+  // E: get out (leave the car parked where it stops).
+  if (keyPressed(input, 'KeyE')) {
+    exitCar(G);
+  }
+}
+
+export function enterCar(G, car) {
+  const P = G.player;
+  const stolen = car.kind === 'parked' || car.kind === 'traffic';
+  if (stolen) addWanted(G, 1);
+  car.kind = 'player';
+  car.driver = 'player';
+  P.car = car;
+  P.onFoot = false;
+  G.stats.carsStolen++;
+}
+
+export function exitCar(G) {
+  const P = G.player;
+  const car = P.car;
+  if (!car) return;
+  car.kind = 'parked';
+  car.driver = null;
+  car.speed = 0;
+  // Step out to the car's left side.
+  const side = car.angle - Math.PI / 2;
+  const ox = car.x + Math.cos(side) * 34;
+  const oy = car.y + Math.sin(side) * 34;
+  const res = resolveCircle(G.world, ox, oy, 14);
+  P.x = res.x;
+  P.y = res.y;
+  P.car = null;
+  P.onFoot = true;
+}
+
+// Back on your feet at Plaza del Sol after a game over, poorer but alive.
+export function respawnPlayer(G) {
+  const P = G.player;
+  G.money = Math.max(0, G.money - 100);
+  P.hp = 100;
+  P.x = 1700;
+  P.y = 1360;
+  P.angle = -Math.PI / 2;
+  P.car = null;
+  P.onFoot = true;
+  P.gun.ammo = CFG.PISTOL_MAG;
+  P.gun.reloading = 0;
+  G.cam.x = P.x;
+  G.cam.y = P.y;
+  G.mode = 'playing';
 }
 
 export function healPlayer(G, amount) {
-  G.player.health = Math.min(CONFIG.playerHealth, G.player.health + amount);
+  const P = G.player;
+  P.hp = Math.min(100, P.hp + amount);
 }

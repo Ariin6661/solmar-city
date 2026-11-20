@@ -1,7 +1,5 @@
-// Seeded random numbers — one small generator the whole game shares,
-// so the world, the traffic and the screenshot scenes are reproducible
-// from a single seed (the ?shot= scenes depend on this).
-
+// Seeded random numbers (mulberry32) so the city and screenshot
+// mode are reproducible from a seed, while live play stays random.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
@@ -17,32 +15,41 @@ export function makeRng(seed) {
   const next = mulberry32(seed);
   return {
     next,
-    // float in [min, max)
+    // Float in [min, max).
     range(min, max) {
       return min + next() * (max - min);
     },
-    // integer in [min, max]
+    // Integer in [min, max] inclusive.
     int(min, max) {
-      return Math.floor(min + next() * (max - min + 1));
+      return min + Math.floor(next() * (max - min + 1));
     },
-    // one element of an array
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
-    },
-    // true with probability p
+    // True with probability p (0..1).
     chance(p) {
       return next() < p;
+    },
+    pick(arr) {
+      return arr[Math.floor(next() * arr.length)];
     },
   };
 }
 
-// Hash a short string into a 32-bit seed, so a named seed ("solmar")
-// always builds the same city.
-export function hashSeed(text) {
+// A fast hash of a string, for turning a word seed into a number.
+export function hashSeed(str) {
   let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+// In-place Fisher-Yates shuffle using this rng.
+export function shuffle(rng, arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.next() * (i + 1));
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
 }

@@ -4,16 +4,19 @@
 
 # Solmar City
 
-Solmar City is an original 2D top-down open-world crime game (Rio Vega, a driver-for-hire in the coastal city of Solmar) built by an AI agent for make.fun's "Make GTA 6" bounty.
+An original 2D top-down open-world crime game. Rio Vega, a driver-for-hire, is drawn back into the Solmar underworld by Mara — explore a sun-soaked coastal city on foot and by car, steal rides, outrun the police, run taxi fares, find hidden packages, and finish a four-mission story.
 
 ## What is in the game
 
-- Explore the coastal city of Solmar on foot and by car — streets, traffic, and pedestrians all live around you.
-- Steal cars: walk up to any parked or passing car and take it.
-- Wanted level: cause trouble and the police come after you, with chases that escalate the more heat you build.
-- 4 story missions, plus taxi fares for quick cash and hidden packages scattered around the city to find.
-- Combat on foot: shoot and punch your way out of trouble, reload when your magazine runs dry.
-- HUD with a live minimap, wanted stars, health, cash, and mission markers — and your progress saves between sessions.
+- A city to explore on foot and by car: 9 avenues × 8 streets, buildings, parks, a beach and a pier, five named landmarks (Mara's Garage, Plaza del Sol, The Meridian, Solmar Pier, Dockside Yards), with a camera that follows you.
+- Traffic cars that follow the roads and pedestrians who stroll the sidewalks — and flee when you threaten them.
+- Cars to steal and drive: walk up, press E, drive with WASD, handbrake on Space, collisions and skid marks.
+- A wanted level (0–5 stars): police cruisers spawn, chase and ram you; the heat dies down when you lay low.
+- Four story missions with objectives, minimap markers and dialogue: Borrowed Wheels, The Pickup, Beat the Clock (90 seconds), Dockside Standoff (four armed enemies) — plus taxi fares and 10 hidden packages.
+- Combat: punch and a pistol (12 rounds, R to reload), enemies who shoot back.
+- A HUD with a live minimap, health, money, wanted stars, objective text, a clock, dialogue, crosshair and ammo.
+- Start screen, pause menu, game over with respawn, mission-passed screens, and saving to localStorage (money, missions, packages, best stats).
+- Polish: smooth camera with shake, day/dusk/night lighting, and fully synthesized WebAudio sound — engine, sirens, gunshots and a music loop (M toggles it). No audio files, no network requests.
 
 ## How to run
 
@@ -21,12 +24,22 @@ Solmar City is an original 2D top-down open-world crime game (Rio Vega, a driver
 node serve.ts
 ```
 
-Then open http://localhost:8080 in desktop Chrome. Keyboard + mouse; no network needed — everything runs locally.
+Then open http://localhost:8080 — the game loads from `game/` and plays offline.
 
 ## Controls
 
-WASD move/drive, mouse aim, E enter/exit car, Space handbrake, R reload, P pause, M music.
+- **WASD / arrows** — move on foot, drive the car
+- **Mouse** — aim the pistol, **click** to shoot
+- **E** — enter / exit a car
+- **Space** — handbrake
+- **F** — punch
+- **R** — reload
+- **P** — pause
+- **M** — music on/off
+- **N** — start the next story mission
 
-## Try make.fun
+## Screenshots
+
+Four real renders of the game itself, in `screenshots/` (the first by name is the cover): the title screen, Rio on foot at rush hour, Mission 1 in progress, and a dusk police chase. Reproduce them with `?shot=start|play|mission|chase&seed=20261120` on the game URL.
 
 Built with make.fun — try it yourself: https://make.fun/r/k7ew9786 (referral code k7ew9786)
