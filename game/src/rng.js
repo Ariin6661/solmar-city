@@ -1,14 +1,9 @@
-// Solmar City — small seeded random number generator.
-// World layout is deterministic from a seed so a screenshot can be
-// reproduced; live gameplay uses its own unseeded instance.
-export function hashSeed(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
+// Solmar City — deterministic randomness.
+//
+// The city, the traffic and the mission pickups all come from a seeded
+// generator, so a screenshot staged with ?seed=7 looks the same every
+// time. mulberry32 is small, fast and good enough for a game; the helpers
+// below are the only random calls the rest of the code makes.
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -21,32 +16,36 @@ export function mulberry32(seed) {
   };
 }
 
-export class Rng {
-  constructor(seed) {
-    this.next = mulberry32(typeof seed === 'string' ? hashSeed(seed) : seed >>> 0);
-  }
-  range(a, b) {
-    return a + this.next() * (b - a);
-  }
-  int(a, b) {
-    return Math.floor(this.range(a, b + 1));
-  }
-  pick(list) {
-    return list[Math.floor(this.next() * list.length)];
-  }
-  chance(p) {
-    return this.next() < p;
-  }
-  sign() {
-    return this.next() < 0.5 ? -1 : 1;
-  }
+// A float in [min, max).
+export function range(rng, min, max) {
+  return min + rng() * (max - min);
+}
 
-  shuffle(list) {
-    const out = [...list];
-    for (let i = out.length - 1; i > 0; i--) {
-      const j = Math.floor(this.next() * (i + 1));
-      [out[i], out[j]] = [out[j], out[i]];
-    }
-    return out;
+// An integer in [min, max] inclusive.
+export function int(rng, min, max) {
+  return Math.floor(range(rng, min, max + 1));
+}
+
+// One element of an array, uniformly.
+export function pick(rng, arr) {
+  // Defensive: an empty list has nothing to pick from.
+  if (!arr.length) return undefined;
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+// A shuffled copy of an array (Fisher-Yates, driven by the same rng).
+export function shuffled(rng, arr) {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
   }
+  return out;
+}
+
+// True with probability p (0..1).
+export function chance(rng, p) {
+  return rng() < p;
 }

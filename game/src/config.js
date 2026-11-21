@@ -1,126 +1,109 @@
-// Solmar City — tuning, palette and static data.
-// One place for every number the rest of the game shares, so a balance
-// change never means hunting through a dozen files.
-export const WORLD = {
-  w: 3000,
-  h: 2480,
-  pitch: 280, // distance between neighbouring road centrelines
-  road: 72, // road width
-  avenues: 9, // north-south roads
-  streets: 8, // east-west roads
-  beachX: 2520, // sand starts here
-  waterX: 2840, // sea starts here
-};
+// Solmar City — central tuning table.
+//
+// Every number the game balances on lives here, so a single look tells
+// you how the city feels: how wide the roads are, how fast Rio runs and
+// drives, how hot the police get, and what each job pays. Nothing in here
+// is code that runs the game; it is the dials the rest of the modules read.
 
-export const PALETTE = {
-  grass: '#8fae62',
-  grassAlt: '#86a45c',
-  sand: '#e6d29a',
-  water: '#3f7fb8',
-  waterDeep: '#2f6a9e',
-  road: '#3c4048',
-  roadLine: '#d8c95a',
-  sidewalk: '#b9b3a4',
-  plaza: '#cbb98d',
-  park: '#6f9e4e',
-  building: ['#e8dcc3', '#d9a06b', '#7fb3a8', '#c96f5a', '#a8b8c8', '#e0b45c'],
-  roof: ['#b0553f', '#4e6e8e', '#7a5a3a', '#5e7d4f', '#8e6f9e'],
-  pier: '#8a6a48',
-  car: ['#d84a3a', '#3a7bd8', '#e8c33a', '#4aa86b', '#e8e8e8', '#7a4aa8', '#2b2b2b'],
-  police: '#24344d',
-  taxi: '#f2c230',
-};
+export const CFG = {
+  // World geometry (pixels). The city is a grid of avenues and streets.
+  tile: 48,
+  worldW: 2600,
+  worldH: 2000,
+  roadW: 84,
+  avenueCount: 9,
+  streetCount: 8,
+  avenueGap: 260,
+  streetGap: 220,
+  marginX: 240,
+  marginY: 200,
+  beachTop: 1780,
 
-export const TUNE = {
-  walkSpeed: 195,
-  walkAccel: 1400,
-  carAccel: 260,
-  carReverse: 160,
-  carMax: 430,
+  // View.
+  viewW: 1280,
+  viewH: 720,
+
+  // Rio on foot.
+  walkSpeed: 175,
+  runSpeed: 245,
+  playerRadius: 13,
+
+  // Cars.
+  carAccel: 540,
+  carReverse: 200,
+  carMaxSpeed: 470,
+  carBrake: 760,
+  carHandbrake: 980,
   carTurn: 2.6,
-  carGrip: 3.2,
-  handbrakeGrip: 0.6,
-  trafficSpeed: 135,
-  pedSpeed: 42,
-  pedFleeSpeed: 95,
-  policeAccel: 300,
-  policeMax: 470,
-  bulletSpeed: 720,
-  pistolAmmo: 12,
-  reloadTime: 1.1,
+  carLength: 46,
+  carWidth: 22,
+  trafficSpeed: 130,
+  cruiserSpeed: 430,
+
+  // Wanted system.
+  maxWanted: 5,
+  heatDecayDelay: 12,
+  bustedFine: 150,
+  bustedRadius: 42,
+
+  // Combat.
   punchRange: 34,
-  punchDamage: 25,
-  bulletDamage: 34,
-  enemyHealth: 50,
-  playerHealth: 100,
-  heatDecayDelay: 20,
-  heatDecayStep: 10,
-  bustedTime: 1.2, // seconds a cruiser must sit on a player on foot
-  bustedFine: 120,
-  packageReward: 50,
-  taxiFareMin: 40,
-  taxiFareMax: 85,
-  clockStart: 8 * 60, // 08:00 in minutes
-  clockRate: 0.5, // game minutes per real second
+  punchDamage: 30,
+  punchCooldown: 0.38,
+  pistolMag: 12,
+  pistolDamage: 25,
+  pistolCooldown: 0.16,
+  reloadTime: 1.2,
+  bulletSpeed: 720,
+  enemyHp: 100,
+  playerHp: 100,
+
+  // Money.
+  missionPay: 500,
+  taxiFare: 80,
+  packagePay: 100,
+  packageCount: 10,
+
+  // Missions.
+  clockMissionTime: 90,
+  standoffEnemies: 4,
+
+  // Timing.
+  dayLength: 240,
+  // Bump the suffix when the save shape changes, so an old save never
+  // loads into a layout it was not written for.
+  saveKey: 'solmar-city-save-v3',
 };
 
+// Palette: one place for every colour the renderer uses, so the city's
+// look stays coherent (sun-bleached plaster, terracotta roofs, teal sea).
+export const PAL = {
+  grass: '#7fae5a',
+  grassDark: '#6d9c4c',
+  sand: '#e8d29a',
+  sea: '#2e7f9e',
+  seaDeep: '#256b87',
+  road: '#3c3f46',
+  roadLine: '#e8e4c8',
+  sidewalk: '#b9b3a4',
+  building: ['#e8c9a0', '#d9a06b', '#c97e5a', '#e0b184', '#b98a68', '#dfc08e'],
+  roof: ['#b4552d', '#8f4a3a', '#a85f35', '#7d5a41'],
+  park: '#5d9248',
+  tree: '#3f7a34',
+  plaza: '#d8cdb2',
+  pier: '#8a6b4a',
+  carColors: ['#c94f43', '#3f6fb5', '#e0a83c', '#4fae6b', '#8e6fb5', '#d8d8d8', '#2b2b2e'],
+  cruiser: '#20304a',
+  player: '#e8b23a',
+  pedColors: ['#d96b6b', '#6b9ed9', '#7ed96b', '#d9b36b', '#b56bd9', '#6bd9c9'],
+};
+
+// Landmark names and where they sit, in world coordinates. The missions
+// and the minimap both read from this table.
 export const LANDMARKS = [
-  { name: "Mara's Garage", x: 420, y: 1680, kind: 'garage' },
-  { name: 'Plaza del Sol', x: 1260, y: 980, kind: 'plaza' },
-  { name: 'The Meridian', x: 1820, y: 420, kind: 'hotel' },
-  { name: 'Solmar Pier', x: 2660, y: 980, kind: 'pier' },
-  { name: 'Dockside Yards', x: 1260, y: 2240, kind: 'docks' },
+  { name: "Mara's Garage", x: 370, y: 330, kind: 'garage' },
+  { name: 'Plaza del Sol', x: 1300, y: 1000, kind: 'plaza' },
+  { name: 'The Meridian', x: 1900, y: 560, kind: 'hotel' },
+  { name: 'Solmar Pier', x: 1300, y: 1900, kind: 'pier' },
+  { name: 'Dockside Yards', x: 2150, y: 1650, kind: 'docks' },
 ];
-
-export const MISSIONS = [
-  {
-    id: 'wheels',
-    title: 'Borrowed Wheels',
-    reward: 150,
-    briefing: [
-      'MARA: Rio. You came back. Good.',
-      'MARA: My crew needs wheels. Borrow a car and bring it to the Plaza.',
-    ],
-  },
-  {
-    id: 'pickup',
-    title: 'The Pickup',
-    reward: 250,
-    briefing: [
-      'MARA: A guest is waiting at The Meridian.',
-      'MARA: Pick them up and take them to the Dockside Yards. No questions.',
-    ],
-  },
-  {
-    id: 'clock',
-    title: 'Beat the Clock',
-    reward: 400,
-    briefing: [
-      'MARA: Ninety seconds. Five checkpoints. The whole city.',
-      'MARA: Drive like the tide is coming in, Rio.',
-    ],
-  },
-  {
-    id: 'standoff',
-    title: 'Dockside Standoff',
-    reward: 600,
-    briefing: [
-      'MARA: They took the yard. Four of them, armed.',
-      'MARA: Take it back, then come home to the garage.',
-    ],
-  },
-];
-
-export const KEYS = {
-  up: ['KeyW', 'ArrowUp'],
-  down: ['KeyS', 'ArrowDown'],
-  left: ['KeyA', 'ArrowLeft'],
-  right: ['KeyD', 'ArrowRight'],
-  enterCar: 'KeyE',
-  handbrake: 'Space',
-  punch: 'KeyF',
-  reload: 'KeyR',
-  pause: 'KeyP',
-  music: 'KeyM',
-  nextMission: 'KeyN',
-};

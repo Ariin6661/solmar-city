@@ -4,21 +4,21 @@
 
 # Solmar City
 
-An original 2D top-down open-world crime game. Rio Vega, a driver-for-hire, is drawn back into the Solmar underworld by Mara — explore a sun-soaked coastal city on foot and by car, steal rides, outrun the police, run taxi fares, find hidden packages, and finish a four-mission story.
+A 2D top-down open-world crime game, built from scratch. Rio Vega — a driver-for-hire — is pulled back into the Solmar underworld by Mara. Roam a sun-soaked coastal city on foot and behind the wheel, lift cars, dodge the police, run fares, pocket hidden packages, and play through a four-job story.
 
-## What is in the game
+## Inside the game
 
-- A city to explore on foot and by car: 9 avenues × 8 streets, buildings, parks, a beach and a pier, five named landmarks (Mara's Garage, Plaza del Sol, The Meridian, Solmar Pier, Dockside Yards), with a camera that follows you.
-- Traffic cars that follow the roads and pedestrians who stroll the sidewalks — and flee when you threaten them.
-- Cars to steal and drive: walk up, press E, drive with WASD, handbrake on Space, collisions and skid marks.
-- A wanted level (0–5 stars): police cruisers spawn, chase and ram you; the heat dies down when you lay low.
-- Four story missions with objectives, minimap markers and dialogue: Borrowed Wheels, The Pickup, Beat the Clock (90 seconds), Dockside Standoff (four armed enemies) — plus taxi fares and 10 hidden packages.
-- Combat: punch and a pistol (12 rounds, R to reload), enemies who shoot back.
-- A HUD with a live minimap, health, money, wanted stars, objective text, a clock, dialogue, crosshair and ammo.
-- Start screen, pause menu, game over with respawn, mission-passed screens, and saving to localStorage (money, missions, packages, best stats).
-- Polish: smooth camera with shake, day/dusk/night lighting, and fully synthesized WebAudio sound — engine, sirens, gunshots and a music loop (M toggles it). No audio files, no network requests.
+- A living city on a 9-avenue by 8-street grid: buildings, parks, a beach and a pier, five named landmarks (Mara's Garage, Plaza del Sol, The Meridian, Solmar Pier, Dockside Yards), and a camera that trails you everywhere.
+- Traffic that drives the grid and pedestrians who walk the sidewalks — and sprint away when you or a gunshot threatens them.
+- Cars worth stealing: walk up, press E, drive with WASD, handbrake on Space, with collisions and skid marks.
+- A wanted level from 0 to 5 stars: cruisers spawn, chase and ram, and the heat only fades when you lay low.
+- A four-mission story with map markers and dialogue — Borrowed Wheels, The Pickup, Beat the Clock (90 seconds), Dockside Standoff (four armed guards) — plus taxi fares and 10 hidden packages to find.
+- Combat: fists and a pistol (12 rounds, R reloads) against enemies who fire back.
+- A HUD with a live minimap, health, cash, wanted stars, objectives, a clock, dialogue, crosshair and ammo.
+- A title screen, pause menu, game-over with respawn, mission-passed screens, and a save in localStorage (money, jobs, packages, best stats).
+- The feel: a smooth camera with shake, daylight that slides into dusk and night, and a fully synthesized WebAudio soundtrack — engine, sirens, gunfire and a bass loop (M toggles it). No audio files, no network requests, no libraries.
 
-## How to run
+## Running it
 
 ```sh
 node serve.ts
@@ -28,18 +28,18 @@ Then open http://localhost:8080 — the game loads from `game/` and plays offlin
 
 ## Controls
 
-- **WASD / arrows** — move on foot, drive the car
+- **WASD / arrows** — walk on foot, drive the car
 - **Mouse** — aim the pistol, **click** to shoot
-- **E** — enter / exit a car
+- **E** — get in / out of a car
 - **Space** — handbrake
 - **F** — punch
 - **R** — reload
 - **P** — pause
 - **M** — music on/off
-- **N** — start the next story mission
+- **N** — start the next story job
 
 ## Screenshots
 
-Four real renders of the game itself, in `screenshots/` (the first by name is the cover): a dusk police chase, Rio on foot at Plaza del Sol, Mission 1 in progress, and a second chase angle. Reproduce them with `?shot=chase|play|mission&seed=1` (or `seed=7` for the fourth) on the game URL.
+Four real renders of the game itself, in `screenshots/` (the first by name is the cover): a dusk police chase, Rio on foot at Plaza del Sol, Mission 1 in progress, and a second chase angle. Retake them with `?shot=chase|play|mission&seed=1` (or `seed=7` for the fourth) on the game URL. Clear the site's localStorage first — the game autosaves, and one shot's money and progress would otherwise leak into the next shot.
 
 Built with make.fun — try it yourself: https://make.fun/r/k7ew9786 (referral code k7ew9786)

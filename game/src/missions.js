@@ -1,200 +1,207 @@
-// Solmar City — the four-mission story, taxi fares and the HUD's
-// objective line. Missions are small state machines: each stage names
-// a target point, and reaching it moves the story on.
-import { MISSIONS, TUNE } from './config.js';
-import { spawnEnemy } from './combat.js';
+// Solmar City — story missions, taxi fares and hidden packages.
+//
+// Four story jobs from Mara, each a small state machine with stages,
+// a map marker and dialogue lines. Between jobs, Rio can run taxi fares
+// (pick someone up, drop them off, get paid) and hunt the ten hidden
+// packages glowing around the city. The module only tracks objectives
+// and payouts; the main loop draws the markers and the dialogue.
+
+import { CFG } from './config.js';
+import { randomRoadPoint } from './world.js';
+import { pick, range } from './rng.js';
+
+export const MISSION_DEFS = [
+  {
+    id: 0,
+    name: 'Borrowed Wheels',
+    giver: 'Mara',
+    intro: 'Rio, I need wheels. Borrow a car — any car — and bring it to Plaza del Sol. Try not to scratch it.',
+    stages: [
+      { text: 'Steal a car (walk up and press E)', done: (g) => !!g.player.inCar },
+      { text: 'Drive to Plaza del Sol', done: (g) => nearMarker(g, 'plaza', 90) },
+    ],
+  },
+  {
+    id: 1,
+    name: 'The Pickup',
+    giver: 'Mara',
+    intro: 'A friend waits at The Meridian. Pick him up and take him to Solmar Pier. He tips well if you are quick.',
+    stages: [
+      { text: 'Drive to The Meridian', done: (g) => nearMarker(g, 'hotel', 90) },
+      { text: 'Take the passenger to Solmar Pier', done: (g) => nearMarker(g, 'pier', 90) },
+    ],
+  },
+  {
+    id: 2,
+    name: 'Beat the Clock',
+    giver: 'Mara',
+    intro: 'Ninety seconds to Dockside Yards. The cargo does not wait, and neither do I. Go.',
+    timer: CFG.clockMissionTime,
+    stages: [
+      { text: 'Reach Dockside Yards before time runs out', done: (g) => nearMarker(g, 'docks', 110) },
+    ],
+  },
+  {
+    id: 3,
+    name: 'Dockside Standoff',
+    giver: 'Mara',
+    intro: 'Four of them guarding the yard. Take them down, Rio. Watch your back — they shoot first.',
+    stages: [
+      { text: 'Eliminate the four guards at Dockside Yards', done: (g) => g.missionKills >= CFG.standoffEnemies },
+    ],
+  },
+];
+
+function landmark(g, kind) {
+  return g.world.landmarks.find((l) => l.kind === kind);
+}
+
+function nearMarker(g, kind, radius) {
+  const lm = landmark(g, kind);
+  if (!lm) return false;
+  const p = g.player.inCar || g.player;
+  return Math.hypot(p.x - lm.x, p.y - lm.y) < radius;
+}
 
 export function makeMissionState() {
   return {
-    index: -1, // -1: no mission running
+    active: -1,
     stage: 0,
     timer: 0,
-    target: null,
-    targetLabel: '',
-    checkpoints: [],
-    checkpoint: 0,
-    passenger: null,
-    done: [],
+    kills: 0,
+    dialogue: null,
+    dialogueTimer: 0,
+    taxi: null,
+    taxiTimer: 0,
+    packages: [],
+    passedFlash: 0,
   };
 }
 
-function landmark(G, name) {
-  return G.world.landmarks.find((l) => l.name === name);
+export function startMission(ms, id, g) {
+  const def = MISSION_DEFS[id];
+  if (!def) return false;
+  ms.active = id;
+  ms.stage = 0;
+  ms.kills = 0;
+  ms.timer = def.timer || 0;
+  // A previous job's "MISSION PASSED" flash must not linger into the new one.
+  ms.passedFlash = 0;
+  ms.dialogue = { name: def.giver, text: def.intro };
+  ms.dialogueTimer = 5;
+  if (id === 3) spawnStandoff(g);
+  return true;
 }
 
-export function startMission(G, index) {
-  const def = MISSIONS[index];
-  const m = G.mission;
-  m.index = index;
-  m.stage = 0;
-  m.timer = 0;
-  m.checkpoints = [];
-  m.checkpoint = 0;
-  m.passenger = null;
-  if (index === 0) {
-    m.target = landmark(G, "Mara's Garage").marker;
-    m.targetLabel = "Go to Mara's Garage";
-  } else if (index === 1) {
-    m.target = landmark(G, 'The Meridian').marker;
-    m.targetLabel = 'Pick up the guest at The Meridian';
-  } else if (index === 2) {
-    m.checkpoints = ['Plaza del Sol', 'The Meridian', 'Solmar Pier', 'Dockside Yards', "Mara's Garage"]
-      .map((n) => landmark(G, n).marker);
-    m.timer = 90;
-    m.target = m.checkpoints[0];
-    m.targetLabel = 'Checkpoint 1 of 5 — 90 seconds!';
-  } else if (index === 3) {
-    m.target = landmark(G, 'Dockside Yards').marker;
-    m.targetLabel = 'Take back the Dockside Yards';
-  }
-  G.dialogue = { lines: def.briefing, i: 0, active: true };
-  G.toast(`${def.title} — ${m.targetLabel}`);
-}
-
-export function completeMission(G) {
-  const def = MISSIONS[G.mission.index];
-  G.player.money += def.reward;
-  G.mission.done.push(def.id);
-  G.save.missionsDone = [...G.mission.done];
-  G.save.money = G.player.money;
-  G.save.bestMoney = Math.max(G.save.bestMoney, G.player.money);
-  G.saveDirty = true;
-  G.audio.missionDone();
-  G.player.health = Math.min(TUNE.playerHealth, G.player.health + 25);
-  G.mission.index = -1;
-  G.mission.target = null;
-  G.mission.targetLabel = '';
-  G.state = 'passed';
-  G.passedTitle = `${def.title} — complete!`;
-  G.passedReward = def.reward;
-}
-
-function near(G, target, radius) {
-  const p = G.player;
-  const x = p.inCar ? p.inCar.x : p.x;
-  const y = p.inCar ? p.inCar.y : p.y;
-  return Math.hypot(target.x - x, target.y - y) < radius;
-}
-
-export function stepMissions(G, dt) {
-  const m = G.mission;
-  if (m.index < 0) {
-    // No story mission: maybe a taxi fare is waiting.
-    maybeTaxi(G, dt);
-    return;
-  }
-  if (m.index === 0) {
-    if (m.stage === 0 && near(G, m.target, 70)) {
-      m.stage = 1;
-      m.target = null;
-      m.targetLabel = 'Steal a car — press E next to one';
-      G.toast('MARA: Any car will do. Take one.');
-    } else if (m.stage === 1 && G.player.inCar) {
-      m.stage = 2;
-      m.target = landmark(G, 'Plaza del Sol').marker;
-      m.targetLabel = 'Drive to Plaza del Sol';
-    } else if (m.stage === 2 && near(G, m.target, 80)) {
-      completeMission(G);
-    }
-  } else if (m.index === 1) {
-    if (m.stage === 0 && near(G, m.target, 70)) {
-      if (!G.player.inCar) {
-        m.targetLabel = 'You need a car for the pickup — press E';
-      } else {
-        m.stage = 1;
-        m.passenger = true;
-        m.target = landmark(G, 'Dockside Yards').marker;
-        m.targetLabel = 'Take the guest to the Dockside Yards';
-        G.toast('GUEST: The yards. And drive smoothly, please.');
-      }
-    } else if (m.stage === 1 && near(G, m.target, 80)) {
-      m.passenger = null;
-      completeMission(G);
-    }
-  } else if (m.index === 2) {
-    m.timer -= dt;
-    m.targetLabel = `Checkpoint ${m.checkpoint + 1} of 5 — ${Math.max(0, Math.ceil(m.timer))}s left`;
-    if (m.timer <= 0) {
-      G.mission.index = -1;
-      G.mission.target = null;
-      G.toast('Out of time. Mara is not impressed. Press N to retry.');
-      return;
-    }
-    if (near(G, m.target, 70)) {
-      m.checkpoint++;
-      if (m.checkpoint >= m.checkpoints.length) {
-        completeMission(G);
-      } else {
-        m.target = m.checkpoints[m.checkpoint];
-        G.audio.pickup();
-      }
-    }
-  } else if (m.index === 3) {
-    if (m.stage === 0 && near(G, m.target, 90)) {
-      m.stage = 1;
-      const yard = landmark(G, 'Dockside Yards');
-      const spots = [
-        { x: yard.x - 120, y: yard.y - 60 },
-        { x: yard.x + 100, y: yard.y - 80 },
-        { x: yard.x - 60, y: yard.y + 90 },
-        { x: yard.x + 140, y: yard.y + 60 },
-      ];
-      for (const s of spots) spawnEnemy(G, s.x, s.y);
-      m.targetLabel = 'Take down all four gunmen';
-      G.toast('Four gunmen. Make it count, Rio.');
-    } else if (m.stage === 1 && G.enemies.every((e) => e.dead)) {
-      m.stage = 2;
-      m.target = landmark(G, "Mara's Garage").marker;
-      m.targetLabel = 'Yard is yours — head home to the garage';
-    } else if (m.stage === 2 && near(G, m.target, 80)) {
-      completeMission(G);
-    }
-  }
-}
-
-function maybeTaxi(G, dt) {
-  const t = G.taxi;
-  if (t.offer && !t.rider) {
-    // A pedestrian flagged a ride: drive up to them.
-    const inCar = G.player.inCar;
-    const cd = inCar ? Math.hypot(t.offer.x - inCar.x, t.offer.y - inCar.y) : Infinity;
-    if (inCar && cd < 60) {
-      t.rider = t.offer;
-      t.offer = null;
-      t.dest = G.world.landmarks[Math.floor(Math.random() * G.world.landmarks.length)].marker;
-      t.fare = Math.floor(TUNE.taxiFareMin + Math.random() * (TUNE.taxiFareMax - TUNE.taxiFareMin));
-      G.peds = G.peds.filter((p) => p !== t.rider);
-      G.toast(`Passenger aboard — take them to the marker. Fare $${t.fare}.`);
-    } else if (Math.hypot(t.offer.x - G.player.x, t.offer.y - G.player.y) > 700) {
-      t.offer.taxi = false;
-      t.offer = null;
-    }
-    return;
-  }
-  if (t.rider) {
-    if (near(G, t.dest, 70)) {
-      G.player.money += t.fare;
-      G.stats.fares++;
-      G.save.fares = G.stats.fares;
-      G.save.money = G.player.money;
-      G.saveDirty = true;
-      G.audio.pickup();
-      G.toast(`Fare complete! +$${t.fare}`);
-      t.rider = null;
-      t.dest = null;
-    }
-    return;
-  }
-  // Offer a fare now and then while driving around with nothing to do.
-  if (G.player.inCar && Math.random() < dt * 0.02) {
-    const close = G.peds.filter((p) => {
-      const d = Math.hypot(p.x - G.player.x, p.y - G.player.y);
-      return d > 60 && d < 320 && p.down <= 0;
+export function spawnStandoff(g) {
+  const lm = landmark(g, 'docks');
+  g.enemies = [];
+  for (let i = 0; i < CFG.standoffEnemies; i++) {
+    const a = (i / CFG.standoffEnemies) * Math.PI * 2;
+    g.enemies.push({
+      x: lm.x + Math.cos(a) * 90,
+      y: lm.y + Math.sin(a) * 90,
+      hp: CFG.enemyHp,
+      radius: 14,
+      shootCooldown: range(g.rng, 0.5, 1.6),
+      dead: false,
     });
-    if (close.length > 0) {
-      t.offer = close[0];
-      t.offer.taxi = true;
-      G.toast('Someone is flagging a taxi — drive up to them.');
+  }
+}
+
+export function updateMissions(ms, g, dt) {
+  if (ms.dialogueTimer > 0) {
+    ms.dialogueTimer -= dt;
+    if (ms.dialogueTimer <= 0) ms.dialogue = null;
+  }
+  if (ms.passedFlash > 0) ms.passedFlash -= dt;
+
+  if (ms.active >= 0) {
+    const def = MISSION_DEFS[ms.active];
+    if (def.timer) {
+      ms.timer -= dt;
+      if (ms.timer <= 0) {
+        ms.dialogue = { name: 'Mara', text: 'Too slow, Rio. We will try again later.' };
+        ms.dialogueTimer = 4;
+        ms.active = -1;
+        return;
+      }
+    }
+    const stage = def.stages[ms.stage];
+    if (stage && stage.done(g)) {
+      ms.stage++;
+      if (ms.stage >= def.stages.length) {
+        g.player.money += CFG.missionPay;
+        g.save.money = g.player.money;
+        g.save.missionsDone.push(def.id);
+        ms.passedFlash = 3;
+        ms.dialogue = { name: 'Mara', text: `${def.name} — done. $${CFG.missionPay} is yours.` };
+        ms.dialogueTimer = 4;
+        ms.active = -1;
+      }
     }
   }
+
+  // Taxi fares: a fare appears, Rio drives to the pickup, then the drop.
+  if (!ms.taxi && ms.active < 0 && Math.random() < dt * 0.03) {
+    const from = randomRoadPoint(g.rng, g.world);
+    const to = randomRoadPoint(g.rng, g.world);
+    ms.taxi = { from, to, phase: 'pickup' };
+    ms.dialogue = { name: 'Dispatch', text: 'Taxi fare nearby. Pick them up.' };
+    ms.dialogueTimer = 3;
+  }
+  if (ms.taxi) {
+    const p = g.player.inCar || g.player;
+    const target = ms.taxi.phase === 'pickup' ? ms.taxi.from : ms.taxi.to;
+    if (Math.hypot(p.x - target.x, p.y - target.y) < 70) {
+      if (ms.taxi.phase === 'pickup') {
+        ms.taxi.phase = 'dropoff';
+        ms.dialogue = { name: 'Passenger', text: 'Thanks! Take me across town, please.' };
+        ms.dialogueTimer = 3;
+      } else {
+        g.player.money += CFG.taxiFare;
+        g.save.money = g.player.money;
+        g.save.taxiDone += 1;
+        ms.taxi = null;
+        ms.dialogue = { name: 'Dispatch', text: `Fare paid: $${CFG.taxiFare}.` };
+        ms.dialogueTimer = 3;
+      }
+    }
+  }
+}
+
+export function placePackages(rng, world, count) {
+  const pkgs = [];
+  for (let i = 0; i < count; i++) {
+    const p = randomRoadPoint(rng, world);
+    pkgs.push({ x: p.x, y: p.y, taken: false, bob: rng() * Math.PI * 2 });
+  }
+  return pkgs;
+}
+
+export function checkPackages(ms, g) {
+  const p = g.player.inCar || g.player;
+  for (const pkg of ms.packages) {
+    if (pkg.taken) continue;
+    if (Math.hypot(p.x - pkg.x, p.y - pkg.y) < 46) {
+      pkg.taken = true;
+      g.player.money += CFG.packagePay;
+      g.save.money = g.player.money;
+      g.save.packages.push(ms.packages.indexOf(pkg));
+      ms.dialogue = { name: 'Rio', text: `Hidden package! +$${CFG.packagePay}.` };
+      ms.dialogueTimer = 3;
+    }
+  }
+}
+
+export function currentObjective(ms) {
+  if (ms.active >= 0) {
+    const def = MISSION_DEFS[ms.active];
+    const stage = def.stages[ms.stage];
+    return stage ? `${def.name}: ${stage.text}` : def.name;
+  }
+  if (ms.taxi) {
+    return ms.taxi.phase === 'pickup' ? 'Taxi: pick up the passenger' : 'Taxi: drop the passenger off';
+  }
+  return 'Press N for the next job — or explore Solmar City';
 }

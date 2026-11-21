@@ -1,49 +1,53 @@
-// Solmar City — save game in localStorage.
-// Money, finished missions, found packages and best stats survive a
-// reload. Everything is guarded: a browser without storage just plays
-// without saving.
-const KEY = 'solmar-city-save-v1';
+// Solmar City — saving to localStorage.
+//
+// The save is small and forgiving: money, finished missions, collected
+// packages and best stats. A corrupt or missing save simply yields a
+// fresh profile, never a crash.
 
-export function defaultSave() {
+import { CFG } from './config.js';
+
+export function freshSave() {
   return {
-    money: 0,
+    money: 250,
     missionsDone: [],
-    packagesFound: [],
-    bestMoney: 0,
-    kills: 0,
-    fares: 0,
+    packages: [],
+    taxiDone: 0,
+    bestWanted: 0,
+    bestMoney: 250,
   };
 }
 
 export function loadSave() {
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return defaultSave();
+    const raw = window.localStorage.getItem(CFG.saveKey);
+    if (!raw) return freshSave();
     const data = JSON.parse(raw);
-    const clean = defaultSave();
-    if (typeof data.money === 'number') clean.money = data.money;
-    if (Array.isArray(data.missionsDone)) clean.missionsDone = data.missionsDone.filter((m) => typeof m === 'string');
-    if (Array.isArray(data.packagesFound)) clean.packagesFound = data.packagesFound.filter((p) => typeof p === 'string');
-    if (typeof data.bestMoney === 'number') clean.bestMoney = data.bestMoney;
-    if (typeof data.kills === 'number') clean.kills = data.kills;
-    if (typeof data.fares === 'number') clean.fares = data.fares;
-    return clean;
+    const base = freshSave();
+    return {
+      // A hand-edited save with negative money must not load as debt.
+      money: typeof data.money === 'number' ? Math.max(0, data.money) : base.money,
+      missionsDone: Array.isArray(data.missionsDone) ? data.missionsDone : [],
+      packages: Array.isArray(data.packages) ? data.packages : [],
+      taxiDone: typeof data.taxiDone === 'number' ? data.taxiDone : 0,
+      bestWanted: typeof data.bestWanted === 'number' ? data.bestWanted : 0,
+      bestMoney: typeof data.bestMoney === 'number' ? data.bestMoney : base.money,
+    };
   } catch (err) {
-    return defaultSave();
+    return freshSave();
   }
 }
 
-export function writeSave(data) {
+export function storeSave(data) {
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(data));
+    window.localStorage.setItem(CFG.saveKey, JSON.stringify(data));
   } catch (err) {
-    // Storage unavailable (private mode, file://) — play on unsaved.
+    // Storage full or unavailable (private mode): the game keeps going.
   }
 }
 
 export function clearSave() {
   try {
-    window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(CFG.saveKey);
   } catch (err) {
     // Nothing to clear.
   }

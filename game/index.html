@@ -3,27 +3,43 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#101318">
 <title>Solmar City — an open-world crime game</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    overflow: hidden;
-    background: #101318;
+    background: #10141a;
     height: 100%;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  #wrap {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    max-width: 100vw;
+    max-height: 100vh;
+    aspect-ratio: 16 / 9;
   }
   canvas {
     display: block;
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: 100%;
+    background: #0c1218;
     cursor: crosshair;
+    image-rendering: auto;
   }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
-<noscript><p style="color:#fff;font-family:sans-serif">Solmar City needs JavaScript to run.</p></noscript>
+<div id="wrap">
+  <canvas id="game" width="1280" height="720"></canvas>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

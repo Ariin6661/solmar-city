@@ -1,113 +1,111 @@
-// Solmar City — cars: physics, collisions and skid marks.
-// One car shape for everything: the player's ride, traffic, taxis and
-// police cruisers. Only the driver differs.
-import { WORLD, TUNE, PALETTE } from './config.js';
+// Solmar City — cars: physics, stealing and driving.
+//
+// A car is a small physics body: position, heading, speed and steering.
+// The same code drives the player's stolen rides and the traffic, with
+// different inputs. Driving is deliberately simple and readable: forward
+// accel, reverse, brake, handbrake for slides, and steering that bites
+// harder the slower you go. Buildings stop cars dead; other cars nudge.
 
-export const CAR_LEN = 46;
-export const CAR_WID = 22;
+import { CFG } from './config.js';
+import { hitsBuilding, clampToWorld } from './world.js';
 
-let carSeq = 0;
-
-export function makeCar(opts) {
-  carSeq++;
+export function makeCar(x, y, angle, color, kind) {
   return {
-    id: carSeq,
-    x: opts.x,
-    y: opts.y,
-    angle: opts.angle || 0,
+    x, y, angle,
     speed: 0,
-    color: opts.color || PALETTE.car[carSeq % PALETTE.car.length],
-    name: opts.name || 'Sedan',
-    kind: opts.kind || 'civil',
-    health: 100,
-    wrecked: false,
-    parked: !!opts.parked,
-    driver: opts.driver || null, // 'player' | 'traffic' | 'police' | null
     steer: 0,
+    color,
+    kind: kind || 'civilian',
+    length: CFG.carLength,
+    width: CFG.carWidth,
+    skid: [],
+    honkCooldown: 0,
   };
 }
 
-// Move a car the player drives. Returns an impact speed when it hits
-// something hard, so the caller can shake the camera and play a sound.
-export function drivePlayer(car, ix, iy, handbrake, dt, world, skids) {
-  const forward = Math.cos(car.angle);
-  const side = Math.sin(car.angle);
-  const along = ix * forward + iy * side;
-  if (along > 0.1) car.speed += TUNE.carAccel * dt;
-  else if (along < -0.1) car.speed -= (car.speed > 5 ? TUNE.carAccel * 0.7 : TUNE.carReverse) * dt;
-  else {
-    car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 220 * dt);
-  }
-  car.speed = Math.max(-140, Math.min(TUNE.carMax, car.speed));
-  const turn = ix * side - iy * forward; // steering input, -1..1
-  const grip = handbrake ? TUNE.handbrakeGrip : TUNE.carGrip;
-  const steerRate = TUNE.carTurn * Math.min(1, Math.abs(car.speed) / 120) * (handbrake ? 1.5 : 1);
-  car.angle += turn * steerRate * Math.sign(car.speed) * dt;
-  const slide = (handbrake && Math.abs(car.speed) > 120) || (Math.abs(turn) > 0.6 && Math.abs(car.speed) > 300);
-  const moveAngle = slide ? car.angle + turn * 0.35 : car.angle;
-  const nx = car.x + Math.cos(moveAngle) * car.speed * dt;
-  const ny = car.y + Math.sin(moveAngle) * car.speed * dt;
-  let impact = 0;
-  if (!world.blockedAt(nx, car.y, 15)) car.x = nx;
-  else impact = Math.abs(car.speed);
-  if (!world.blockedAt(car.x, ny, 15)) car.y = ny;
-  else impact = Math.max(impact, Math.abs(car.speed));
-  if (impact > 60) car.speed *= 0.35;
-  if (slide && skids) {
-    skids.push({ x: car.x, y: car.y, angle: car.angle, life: 5 });
-    if (skids.length > 220) skids.shift();
-  }
-  car.speed *= Math.pow(handbrake ? 0.4 : 0.92, dt * 4);
-  return impact;
-}
+// Drive the car one step. `drive` is { throttle: -1..1, steer: -1..1,
+// brake: bool, handbrake: bool }. Returns a list of skid marks made.
+export function driveCar(car, drive, dt, world) {
+  const marks = [];
+  const forward = { x: Math.cos(car.angle), y: Math.sin(car.angle) };
 
-// Drive a car toward a point (police chase, scripted moves).
-export function driveToward(car, tx, ty, maxSpeed, dt, world) {
-  const dx = tx - car.x;
-  const dy = ty - car.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const want = Math.atan2(dy, dx);
-  let diff = want - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-  car.speed = Math.min(maxSpeed, car.speed + TUNE.policeAccel * dt);
-  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  if (!world.blockedAt(nx, car.y, 15)) car.x = nx;
-  else car.speed *= 0.5;
-  if (!world.blockedAt(car.x, ny, 15)) car.y = ny;
-  else car.speed *= 0.5;
-  return dist;
-}
-
-// Push overlapping cars apart and trade a little speed. Returns the
-// hardest impact this frame, for sound and shake.
-export function collideCars(cars) {
-  let hardest = 0;
-  for (let i = 0; i < cars.length; i++) {
-    for (let j = i + 1; j < cars.length; j++) {
-      const a = cars[i];
-      const b = cars[j];
-      if (a.wrecked || b.wrecked) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 0.01 && d < 34) {
-        const push = (34 - d) / 2;
-        const nx = dx / d;
-        const ny = dy / d;
-        a.x -= nx * push;
-        a.y -= ny * push;
-        b.x += nx * push;
-        b.y += ny * push;
-        const hit = Math.abs(a.speed - b.speed) + 40;
-        if (hit > hardest) hardest = hit;
-        const avg = (a.speed + b.speed) / 2;
-        a.speed = avg * 0.6;
-        b.speed = avg * 0.6;
-      }
+  if (drive.throttle > 0) {
+    car.speed += CFG.carAccel * drive.throttle * dt;
+  } else if (drive.throttle < 0) {
+    if (car.speed > 5) {
+      car.speed -= CFG.carBrake * dt;
+    } else {
+      car.speed -= CFG.carReverse * dt * -drive.throttle;
     }
   }
-  return hardest;
+  if (drive.brake) {
+    // The brake always works against the motion: plain subtraction would
+    // speed the car up while it is reversing.
+    const s = Math.sign(car.speed);
+    car.speed -= s * CFG.carBrake * dt;
+    if (Math.sign(car.speed) !== s) car.speed = 0;
+  }
+
+  // Drag and rolling resistance.
+  car.speed -= car.speed * 0.55 * dt;
+  if (drive.handbrake) {
+    car.speed -= car.speed * 2.2 * dt;
+    if (Math.abs(car.speed) > 120) {
+      marks.push({ x: car.x, y: car.y, angle: car.angle, life: 1.6 });
+    }
+  }
+
+  // Clamp speed both ways.
+  const maxFwd = car.kind === 'cruiser' ? CFG.cruiserSpeed : CFG.carMaxSpeed;
+  if (car.speed > maxFwd) car.speed = maxFwd;
+  if (car.speed < -CFG.carReverse) car.speed = -CFG.carReverse;
+  if (Math.abs(car.speed) < 4 && drive.throttle === 0) car.speed = 0;
+
+  // Steering: sharper at low speed, looser at high speed, and reversed
+  // when backing up. Handbrake lets the tail step out.
+  const grip = Math.min(1, Math.abs(car.speed) / 140 + 0.25);
+  const turnRate = CFG.carTurn * grip * (drive.handbrake ? 1.7 : 1);
+  car.angle += drive.steer * turnRate * dt * (car.speed >= 0 ? 1 : -1) *
+    Math.min(1, Math.abs(car.speed) / 60 + 0.2);
+
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+
+  // Buildings are solid: stop and lose a little speed on impact.
+  const hit = hitsBuilding(world, nx, ny, car.length * 0.42);
+  if (hit) {
+    car.speed *= -0.25;
+  } else {
+    car.x = nx;
+    car.y = ny;
+  }
+  const clamped = clampToWorld(car.x, car.y, 30);
+  car.x = clamped.x;
+  car.y = clamped.y;
+
+  return marks;
+}
+
+// Soft push between two cars so traffic does not overlap.
+export function separateCars(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const d = Math.hypot(dx, dy);
+  const min = (a.length + b.length) * 0.42;
+  if (d > 0.01 && d < min) {
+    const push = (min - d) / 2;
+    const nx = dx / d;
+    const ny = dy / d;
+    a.x -= nx * push;
+    a.y -= ny * push;
+    b.x += nx * push;
+    b.y += ny * push;
+    a.speed *= 0.94;
+    b.speed *= 0.94;
+  }
+}
+
+// Is the point close enough to a car door to steal it?
+export function nearCarDoor(car, x, y) {
+  return Math.hypot(car.x - x, car.y - y) < 62;
 }

@@ -1,121 +1,106 @@
-// Solmar City — screenshot staging.
-// ?shot=start|play|mission|chase&seed=N puts the game straight into a
-// composed scene, so the four screenshots are reproducible renders of
-// the game itself. Nothing here changes how the game plays.
-import { TUNE } from './config.js';
+// Solmar City — screenshot staging (?shot=...).
+//
+// The screenshots are real renders of the game, staged through the URL
+// the same way a player would reach the scene: ?shot=chase|play|mission
+// with a seed. The staging skips the title screen, places Rio, the cars
+// and the wanted level, and sets the time of day — then the normal game
+// loop runs and the shot is taken a few seconds in, once the scene has
+// settled. Deterministic: the same shot and seed always stage the same
+// scene.
+
+import { CFG } from './config.js';
 import { makeCar } from './vehicles.js';
 import { startMission } from './missions.js';
 
-export function parseShot() {
-  const params = new URLSearchParams(window.location.search);
-  const shot = params.get('shot');
-  const seed = params.get('seed') || 'solmar-20261120';
-  const known = ['start', 'play', 'mission', 'chase'];
-  return { shot: known.includes(shot) ? shot : null, seed };
+export function readShotParams() {
+  const q = new URLSearchParams(window.location.search);
+  const shot = q.get('shot');
+  const seed = parseInt(q.get('seed') || '1', 10);
+  if (!shot) return null;
+  if (!['chase', 'play', 'mission'].includes(shot)) return null;
+  return { shot, seed: Number.isFinite(seed) ? seed : 1 };
 }
 
-function parkNear(G, x, y, color, name) {
-  const car = makeCar({ x, y, angle: 0, color, name, kind: 'civil', parked: true });
-  G.cars.push(car);
-  return car;
-}
+// Stage the game for a screenshot. Called once, before the first frame.
+export function applyShot(g, params) {
+  const { shot, seed } = params;
+  g.rngSeed = seed;
+  g.shotMode = shot;
+  g.state = 'playing';
+  const world = g.world;
+  const plaza = world.landmarks.find((l) => l.kind === 'plaza');
+  const pier = world.landmarks.find((l) => l.kind === 'pier');
 
-export function stageShot(G, name) {
-  const world = G.world;
-  const plaza = world.landmarks.find((l) => l.name === 'Plaza del Sol');
-  const garage = world.landmarks.find((l) => l.name === "Mara's Garage");
-  G.shot = name;
-  if (name === 'start') {
-    G.state = 'title';
-    G.clock = 10 * 60;
-    G.camera.x = plaza.x;
-    G.camera.y = plaza.y;
-    parkNear(G, plaza.x - 90, plaza.y + 60, '#d84a3a', 'Coupe');
-    parkNear(G, plaza.x + 110, plaza.y - 40, '#3a7bd8', 'Sedan');
-    parkNear(G, plaza.x + 40, plaza.y + 120, '#e8c33a', 'Taxi');
-    return;
-  }
-  if (name === 'play') {
-    G.state = 'playing';
-    G.clock = 11 * 60;
-    G.player.x = plaza.x;
-    G.player.y = plaza.y + 30;
-    G.player.angle = -Math.PI / 2;
-    G.camera.x = plaza.x;
-    G.camera.y = plaza.y;
-    parkNear(G, plaza.x - 140, plaza.y - 60, '#4aa86b', 'Hatch');
-    parkNear(G, plaza.x + 160, plaza.y + 80, '#7a4aa8', 'Coupe');
-    return;
-  }
-  if (name === 'mission') {
-    G.state = 'playing';
-    G.clock = 15 * 60;
-    startMission(G, 0);
-    // Jump the story to its driving stage, with the Plaza in frame:
-    // the car rolls north up 4th avenue toward the marker.
-    G.mission.stage = 2;
-    G.mission.target = plaza.marker;
-    G.mission.targetLabel = 'Drive to Plaza del Sol';
-    G.dialogue.active = false;
-    G.toastT = 0;
-    G.toastText = '';
-    const car = makeCar({
-      x: 1120,
-      y: 1260,
-      angle: -Math.PI / 2,
-      color: '#d84a3a',
-      name: 'Coupe',
-      kind: 'civil',
-    });
-    car.driver = 'player';
-    car.owned = true;
-    car.speed = 200;
-    G.cars.push(car);
-    G.player.inCar = car;
-    G.player.x = car.x;
-    G.player.y = car.y;
-    G.camera.x = car.x;
-    G.camera.y = car.y;
-    return;
-  }
-  if (name === 'chase') {
-    G.state = 'playing';
-    G.clock = 18 * 60 + 30; // dusk
-    G.mission.targetLabel = 'Lose the police!';
-    const car = makeCar({
-      x: 1400,
-      y: 1120,
-      angle: -Math.PI / 2,
-      color: '#d84a3a',
-      name: 'Coupe',
-      kind: 'civil',
-    });
-    car.driver = 'player';
-    car.owned = true;
+  if (shot === 'chase') {
+    // Dusk chase: Rio in a car, three stars, three cruisers closing in.
+    g.timeOfDay = CFG.dayLength * 0.5;
+    const car = makeCar(1300, 1000, 0, '#c94f43', 'civilian');
     car.speed = 320;
-    G.cars.push(car);
-    G.player.inCar = car;
-    G.player.x = car.x;
-    G.player.y = car.y;
-    G.wanted = 3;
-    G.lastCrimeAt = G.time;
-    G.audio.startSiren(true);
-    const spots = [
-      { x: 1180, y: 900, angle: -0.4 },
-      { x: 1620, y: 900, angle: Math.PI + 0.4 },
-      { x: 1400, y: 1400, angle: Math.PI / 2 },
+    g.player.inCar = car;
+    g.player.x = car.x;
+    g.player.y = car.y;
+    // A couple of traffic cars nearby so the street reads as alive.
+    g.cars = [
+      makeCar(1150, 860, 0, '#3f6fb5', 'civilian'),
+      makeCar(1480, 1140, Math.PI, '#e0a83c', 'civilian'),
     ];
-    for (const s of spots) {
-      const cruiser = makeCar({ x: s.x, y: s.y, angle: s.angle, color: '#24344d', name: 'Cruiser', kind: 'police', driver: 'police' });
-      cruiser.health = 120;
+    g.cars[0].speed = 130;
+    g.cars[1].speed = 130;
+    g.police.wanted = 3;
+    g.police.cruisers = [];
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + 0.6;
+      const cruiser = makeCar(
+        car.x + Math.cos(a) * 260,
+        car.y + Math.sin(a) * 260,
+        a + Math.PI,
+        '#20304a',
+        'cruiser',
+      );
       cruiser.speed = 380;
-      G.cars.push(cruiser);
+      g.police.cruisers.push(cruiser);
     }
-    for (let i = 0; i < 8; i++) {
-      G.skids.push({ x: 1400 - i * 18, y: 1120 + i * 8, angle: -Math.PI / 2 + 0.2, life: 5 });
-    }
-    G.camera.x = car.x;
-    G.camera.y = car.y;
-    return;
+    g.camera.x = car.x - CFG.viewW / 2;
+    g.camera.y = car.y - CFG.viewH / 2;
+  } else if (shot === 'play') {
+    // Rio on foot at Plaza del Sol, rush hour around him.
+    g.timeOfDay = CFG.dayLength * 0.18;
+    g.player.x = plaza.x - 40;
+    g.player.y = plaza.y + 60;
+    g.player.angle = -Math.PI / 2;
+    g.camera.x = g.player.x - CFG.viewW / 2;
+    g.camera.y = g.player.y - CFG.viewH / 2;
+  } else if (shot === 'mission') {
+    // Mission 1 in progress: driving east along 1080 Street toward the
+    // Plaza, gold beacon ahead. Starts far enough out that the run to
+    // the Plaza is still in progress when the shot is taken.
+    g.timeOfDay = CFG.dayLength * 0.3;
+    const car = makeCar(600, 1080, 0, '#3f6fb5', 'civilian');
+    car.speed = 300;
+    g.player.inCar = car;
+    g.player.x = car.x;
+    g.player.y = car.y;
+    g.cars = [makeCar(1150, 860, 0, '#c94f43', 'civilian')];
+    g.cars[0].speed = 130;
+    startMission(g.missions, 0, g);
+    g.missions.stage = 1;
+    g.camera.x = car.x - CFG.viewW / 2;
+    g.camera.y = car.y - CFG.viewH / 2;
   }
+
+  // Keep the frame clean for the shot: no intro dialogue.
+  g.missions.dialogue = null;
+  g.missions.dialogueTimer = 0;
+}
+
+// Error hook for the screenshot run: the harness reads this to confirm
+// a shot rendered without runtime errors.
+export function installErrorHook() {
+  window.__gameErrors = [];
+  window.addEventListener('error', (e) => {
+    window.__gameErrors.push(String(e.message || e.error || 'error'));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    window.__gameErrors.push(String(e.reason || 'rejection'));
+  });
 }

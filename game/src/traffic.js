@@ -1,115 +1,128 @@
 // Solmar City — traffic cars and pedestrians.
-// Traffic follows the road grid and turns at intersections; pedestrians
-// stroll the sidewalks and run when the player threatens them.
-import { WORLD, TUNE, PALETTE } from './config.js';
-import { makeCar } from './vehicles.js';
+//
+// The city feels alive because of these two populations. Traffic cars
+// cruise the road grid, stopping politely (well, mostly) at each
+// intersection before turning. Pedestrians stroll the sidewalks and, when
+// a car or a gunshot threatens them, run for the nearest quiet block.
+// Both are cheap: a few dozen entities, updated with plain steering.
 
-export function spawnTraffic(world, rng, count) {
-  const cars = [];
-  for (let i = 0; i < count; i++) {
-    const p = world.randomRoadPoint(rng);
-    const car = makeCar({
-      x: p.x,
-      y: p.y,
-      angle: p.angle,
-      color: rng.pick(PALETTE.car),
-      name: rng.pick(['Sedan', 'Hatch', 'Coupe', 'Van']),
-      kind: 'civil',
-      driver: 'traffic',
-    });
-    car.speed = TUNE.trafficSpeed * rng.range(0.8, 1.15);
-    car.route = { vertical: Math.abs(Math.sin(p.angle)) > 0.5, dir: p.angle };
-    cars.push(car);
-  }
-  return cars;
+import { CFG, PAL } from './config.js';
+import { makeCar, driveCar, separateCars } from './vehicles.js';
+import { nearestRoadPoint, randomRoadPoint, hitsBuilding } from './world.js';
+import { range, int, pick, chance } from './rng.js';
+
+export function spawnTrafficCar(rng, world) {
+  const p = randomRoadPoint(rng, world);
+  const onAvenue = Math.abs(p.x - Math.round(p.x)) < 1;
+  const angle = chance(rng, 0.5) ? 0 : Math.PI;
+  const car = makeCar(p.x, p.y, angle, pick(rng, PAL.carColors), 'civilian');
+  car.speed = range(rng, CFG.trafficSpeed * 0.6, CFG.trafficSpeed);
+  car.target = pickNextTarget(rng, world, car);
+  return car;
 }
 
-export function stepTraffic(cars, dt, world, rng) {
-  for (const car of cars) {
-    if (car.wrecked) continue;
-    // At an intersection, sometimes turn onto the crossing road.
-    const nearV = Math.min(Math.abs(car.x % WORLD.pitch), WORLD.pitch - Math.abs(car.x % WORLD.pitch));
-    const nearH = Math.min(Math.abs(car.y % WORLD.pitch), WORLD.pitch - Math.abs(car.y % WORLD.pitch));
-    if (nearV < 26 && nearH < 26 && rng.chance(dt * 0.25)) {
-      const vertical = rng.chance(0.5);
-      const dir = rng.chance(0.5) ? 1 : -1;
-      car.angle = vertical ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
-    }
-    // Keep inside the road network: bounce off the edges.
-    const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-    const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    if (nx < 20 || nx > (WORLD.avenues - 1) * WORLD.pitch + 20 || ny < 20 || ny > (WORLD.streets - 1) * WORLD.pitch + 20) {
-      car.angle += Math.PI;
-      car.x += Math.cos(car.angle) * car.speed * dt;
-      car.y += Math.sin(car.angle) * car.speed * dt;
-    } else if (!world.blockedAt(nx, ny, 14)) {
-      car.x = nx;
-      car.y = ny;
-    } else {
-      car.angle += Math.PI / 2;
-    }
+function pickNextTarget(rng, world, car) {
+  // Pick the next intersection along the road the car is on.
+  const near = nearestRoadPoint(world, car.x, car.y);
+  const vertical = Math.abs(car.x - near.x) < 2;
+  if (vertical) {
+    const dir = car.angle > -Math.PI / 2 && car.angle < Math.PI / 2 ? 1 : -1;
+    const streets = world.streets.filter((sy) => (dir > 0 ? sy > car.y + 30 : sy < car.y - 30));
+    const sy = streets.length ? streets[0] : world.streets[world.streets.length - 1];
+    return { x: car.x, y: sy };
   }
+  const dir = car.angle > 0 && car.angle < Math.PI ? 1 : -1;
+  const avenues = world.avenues.filter((ax) => (dir > 0 ? ax > car.x + 30 : ax < car.x - 30));
+  const ax = avenues.length ? avenues[0] : world.avenues[world.avenues.length - 1];
+  return { x: ax, y: car.y };
 }
 
-export function spawnPeds(world, rng, count) {
-  const peds = [];
-  const shirts = ['#d84a3a', '#3a7bd8', '#e8c33a', '#4aa86b', '#e8e8e8', '#7a4aa8', '#e07a3a'];
-  for (let i = 0; i < count; i++) {
-    const p = world.sidewalkPoint(rng);
-    peds.push({
-      x: p.x,
-      y: p.y,
-      angle: rng.range(0, Math.PI * 2),
-      speed: TUNE.pedSpeed * rng.range(0.8, 1.3),
-      color: rng.pick(shirts),
-      state: 'walk',
-      tx: p.x,
-      ty: p.y,
-      wait: rng.range(0, 4),
-      down: 0,
-      taxi: false,
-    });
+export function updateTrafficCar(car, dt, world, rng) {
+  // Parked cars stay put (they still draw and can be stolen).
+  if (car.parked) return [];
+  // A car with no target yet picks one first.
+  if (!car.target) car.target = pickNextTarget(rng, world, car);
+  // Steer toward the current target intersection.
+  const dx = car.target.x - car.x;
+  const dy = car.target.y - car.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 26) {
+    car.target = pickNextTarget(rng, world, car);
+    // Sometimes turn at the intersection.
+    if (chance(rng, 0.45)) {
+      const vertical = Math.abs(car.x - car.target.x) < 2;
+      car.angle = vertical ? (dy > 0 ? Math.PI / 2 : -Math.PI / 2) : (dx > 0 ? 0 : Math.PI);
+    }
   }
-  return peds;
+  const wantAngle = Math.atan2(dy, dx);
+  let diff = wantAngle - car.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  const steer = Math.max(-1, Math.min(1, diff * 2.2));
+  const marks = driveCar(car, { throttle: 0.55, steer, brake: false, handbrake: false }, dt, world);
+  car.speed = Math.min(car.speed, CFG.trafficSpeed);
+  return marks;
 }
 
-export function stepPeds(peds, dt, world, rng, threat) {
-  for (const ped of peds) {
-    if (ped.down > 0) {
-      ped.down -= dt;
-      continue;
+export function makePedestrian(rng, world) {
+  const p = randomRoadPoint(rng, world);
+  return {
+    x: p.x + range(rng, -50, 50),
+    y: p.y + range(rng, -50, 50),
+    angle: range(rng, 0, Math.PI * 2),
+    speed: range(rng, 28, 52),
+    color: pick(rng, PAL.pedColors),
+    fleeing: 0,
+    walkPhase: range(rng, 0, Math.PI * 2),
+  };
+}
+
+export function updatePedestrian(ped, dt, world, threats, rng) {
+  // Threats: the player's car, gunfire, or a nearby cruiser.
+  let fleeX = 0;
+  let fleeY = 0;
+  for (const t of threats) {
+    const dx = ped.x - t.x;
+    const dy = ped.y - t.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 170 && d > 1) {
+      fleeX += (dx / d) * (1 - d / 170);
+      fleeY += (dy / d) * (1 - d / 170);
     }
-    const dx = ped.x - threat.x;
-    const dy = ped.y - threat.y;
-    const dist = Math.hypot(dx, dy);
-    const scared = threat.active && dist < threat.radius;
-    if (scared) {
-      ped.state = 'flee';
-      ped.angle = Math.atan2(dy, dx);
-      ped.speed = TUNE.pedFleeSpeed;
-    } else if (ped.state === 'flee' && dist > threat.radius * 1.6) {
-      ped.state = 'walk';
-      ped.speed = TUNE.pedSpeed;
-    }
-    if (ped.state === 'walk') {
-      const tdx = ped.tx - ped.x;
-      const tdy = ped.ty - ped.y;
-      if (Math.hypot(tdx, tdy) < 12) {
-        if (ped.wait > 0) {
-          ped.wait -= dt;
-          continue;
-        }
-        const p = world.sidewalkPoint(rng);
-        ped.tx = p.x;
-        ped.ty = p.y;
-        ped.wait = rng.range(0, 5);
-      } else {
-        ped.angle = Math.atan2(tdy, tdx);
-      }
-    }
-    const nx = ped.x + Math.cos(ped.angle) * ped.speed * dt;
-    const ny = ped.y + Math.sin(ped.angle) * ped.speed * dt;
-    if (!world.blockedAt(nx, ped.y, 8)) ped.x = nx;
-    if (!world.blockedAt(ped.x, ny, 8)) ped.y = ny;
   }
+  const fleeing = Math.hypot(fleeX, fleeY) > 0.15;
+  if (fleeing) ped.fleeing = 0.9;
+  else ped.fleeing = Math.max(0, ped.fleeing - dt);
+
+  let tx;
+  let ty;
+  let speed = ped.speed;
+  if (ped.fleeing > 0) {
+    tx = ped.x + fleeX * 100;
+    ty = ped.y + fleeY * 100;
+    speed = ped.speed * 3.1;
+  } else {
+    // Wander along the sidewalk: keep the current heading, turn rarely.
+    if (chance(rng, dt * 0.12)) ped.angle += range(rng, -1.4, 1.4);
+    tx = ped.x + Math.cos(ped.angle) * 60;
+    ty = ped.y + Math.sin(ped.angle) * 60;
+  }
+  const want = Math.atan2(ty - ped.y, tx - ped.x);
+  let diff = want - ped.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  ped.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
+  ped.x += Math.cos(ped.angle) * speed * dt;
+  ped.y += Math.sin(ped.angle) * speed * dt;
+  ped.walkPhase += dt * (fleeing ? 14 : 7);
+
+  // Stay out of buildings and inside the world.
+  const hit = hitsBuilding(world, ped.x, ped.y, 10);
+  if (hit) {
+    ped.x -= Math.cos(ped.angle) * speed * dt * 2;
+    ped.y -= Math.sin(ped.angle) * speed * dt * 2;
+    ped.angle += Math.PI / 2;
+  }
+  ped.x = Math.max(20, Math.min(CFG.worldW - 20, ped.x));
+  ped.y = Math.max(20, Math.min(CFG.worldH - 20, ped.y));
 }

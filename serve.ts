@@ -1,13 +1,19 @@
-// Solmar City — a tiny static server for local play-testing.
-// Serves game/ at http://localhost:8080 with no network use at all:
-// every file comes from disk. Node 22, standard library only.
+// Solmar City — local static server.
+//
+// Serves the repository root so the game plays at http://localhost:8080
+// from game/index.html, offline, with no build step. Plain Node standard
+// library only: a tiny file server with a content-type table, a guard
+// against paths escaping the root, and a friendly console line.
+
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, normalize, dirname } from 'node:path';
+import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), 'game');
-const MIME = {
+const root = fileURLToPath(new URL('.', import.meta.url)).replace(/\/+$/, '');
+const port = Number(process.env.PORT || 8080);
+
+const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -16,27 +22,30 @@ const MIME = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.md': 'text/markdown; charset=utf-8',
 };
 
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url || '/', 'http://localhost');
-    const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    const path = normalize(join(root, rel));
-    if (!path.startsWith(root)) {
+    const url = new URL(req.url || '/', `http://localhost:${port}`);
+    let rel = decodeURIComponent(url.pathname);
+    if (rel === '/') rel = '/game/index.html';
+    const file = normalize(join(root, rel));
+    if (!file.startsWith(root + sep) && file !== root) {
       res.writeHead(403);
       res.end('forbidden');
       return;
     }
-    const data = await readFile(path);
-    res.writeHead(200, { 'content-type': MIME[extname(path)] || 'application/octet-stream', 'cache-control': 'no-store' });
-    res.end(data);
+    const body = await readFile(file);
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream' });
+    res.end(body);
   } catch (err) {
     res.writeHead(404);
     res.end('not found');
   }
 });
 
-server.listen(8080, () => {
-  console.log('Solmar City at http://localhost:8080');
+server.listen(port, () => {
+  console.log(`Solmar City at http://localhost:${port} (game at /game/index.html)`);
 });
