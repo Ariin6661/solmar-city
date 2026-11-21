@@ -1,93 +1,121 @@
-// Deterministic screenshot mode: ?shot=start|play|mission|chase&seed=N
-// sets up a fixed scene so the screenshots are reproducible.
-import { CFG, AVE_X, ST_Y, LANDMARKS } from './config.js';
-import { makeRng, hashSeed } from './rng.js';
+// Solmar City — screenshot staging.
+// ?shot=start|play|mission|chase&seed=N puts the game straight into a
+// composed scene, so the four screenshots are reproducible renders of
+// the game itself. Nothing here changes how the game plays.
+import { TUNE } from './config.js';
 import { makeCar } from './vehicles.js';
 import { startMission } from './missions.js';
-import { spawnCop, addWanted } from './police.js';
 
-export function parseShotParams() {
-  const q = new URLSearchParams(window.location.search);
-  const shot = q.get('shot');
-  if (!shot) return null;
-  const seedRaw = q.get('seed');
-  const seed = seedRaw ? (Number(seedRaw) || hashSeed(seedRaw)) : 20261120;
-  return { kind: shot, seed };
+export function parseShot() {
+  const params = new URLSearchParams(window.location.search);
+  const shot = params.get('shot');
+  const seed = params.get('seed') || 'solmar-20261120';
+  const known = ['start', 'play', 'mission', 'chase'];
+  return { shot: known.includes(shot) ? shot : null, seed };
 }
 
-// Set up the scene for one screenshot kind. Called after the world,
-// player, traffic and parked cars exist.
-export function applyShot(G, kind, seed) {
-  G.shot = { kind, seed };
-  G.rng = makeRng(seed);
-  const P = G.player;
-  if (kind === 'start') {
-    G.mode = 'start';
-    G.clockHours = 16.5;
+function parkNear(G, x, y, color, name) {
+  const car = makeCar({ x, y, angle: 0, color, name, kind: 'civil', parked: true });
+  G.cars.push(car);
+  return car;
+}
+
+export function stageShot(G, name) {
+  const world = G.world;
+  const plaza = world.landmarks.find((l) => l.name === 'Plaza del Sol');
+  const garage = world.landmarks.find((l) => l.name === "Mara's Garage");
+  G.shot = name;
+  if (name === 'start') {
+    G.state = 'title';
+    G.clock = 10 * 60;
+    G.camera.x = plaza.x;
+    G.camera.y = plaza.y;
+    parkNear(G, plaza.x - 90, plaza.y + 60, '#d84a3a', 'Coupe');
+    parkNear(G, plaza.x + 110, plaza.y - 40, '#3a7bd8', 'Sedan');
+    parkNear(G, plaza.x + 40, plaza.y + 120, '#e8c33a', 'Taxi');
     return;
   }
-  G.mode = 'playing';
-  if (kind === 'play') {
-    // Rio on foot at the Plaza del Sol crossing, rush hour around him.
-    P.x = AVE_X(4) + 30;
-    P.y = ST_Y(3) + 30;
-    P.angle = Math.PI / 4;
-    P.onFoot = true;
-    P.car = null;
-    G.clockHours = 16.0;
-    G.objective = 'Explore Solmar — steal a car, run a fare, find packages';
-    G.dialogue = { name: 'Mara', text: 'Welcome back to Solmar, Rio. The city missed you.', t: 99 };
-  } else if (kind === 'mission') {
-    // Mission 1 in progress: Rio in a car, Mara's Garage marked.
-    const car = makeCar(G, 690, 1300, -Math.PI / 2, '#c0392b', 'player');
-    car.driver = 'player';
-    G.cars.push(car);
-    P.car = car;
-    P.onFoot = false;
-    P.x = car.x;
-    P.y = car.y;
-    P.angle = car.angle;
-    startMission(G, 0);
-    G.mission.stage = 1;
-    G.mission.target = { x: LANDMARKS[0].frontX, y: LANDMARKS[0].frontY, label: "Mara's Garage" };
-    G.objective = "Drive the car to Mara's Garage";
-    G.clockHours = 17.4;
-  } else if (kind === 'chase') {
-    // Dusk chase: Rio speeding down 3rd Street, three cruisers on him.
-    const car = makeCar(G, 1200, ST_Y(3) + 17, 0, '#e67e22', 'player');
-    car.driver = 'player';
-    car.speed = 380;
-    G.cars.push(car);
-    P.car = car;
-    P.onFoot = false;
-    P.x = car.x;
-    P.y = car.y;
-    P.angle = 0;
-    G.wanted = 3;
-    G.lastCrimeT = G.time;
-    for (let i = 0; i < 3; i++) {
-      const cop = spawnCop(G);
-      cop.x = 1200 - 180 - i * 130;
-      cop.y = ST_Y(3) + (i % 2 === 0 ? -17 : 17);
-      cop.angle = 0;
-      cop.speed = 340;
-    }
-    G.objective = 'Lose the police — lay low until the heat dies down';
-    G.clockHours = 18.6;
+  if (name === 'play') {
+    G.state = 'playing';
+    G.clock = 11 * 60;
+    G.player.x = plaza.x;
+    G.player.y = plaza.y + 30;
+    G.player.angle = -Math.PI / 2;
+    G.camera.x = plaza.x;
+    G.camera.y = plaza.y;
+    parkNear(G, plaza.x - 140, plaza.y - 60, '#4aa86b', 'Hatch');
+    parkNear(G, plaza.x + 160, plaza.y + 80, '#7a4aa8', 'Coupe');
+    return;
   }
-  // Camera snaps in shot mode (see render.js updateCamera).
-  G.cam.x = P.x;
-  G.cam.y = P.y;
-}
-
-// The four screenshot scenes, with what each one shows.
-export const SHOT_KINDS = {
-  start: 'Title screen over the city',
-  play: 'Rio on foot at the Plaza del Sol crossing, rush hour',
-  mission: 'Mission 1: drive the borrowed car to Mara\'s Garage',
-  chase: 'Dusk police chase down 3rd Street, wanted level 3',
-};
-
-export function isShotMode(G) {
-  return !!G.shot;
+  if (name === 'mission') {
+    G.state = 'playing';
+    G.clock = 15 * 60;
+    startMission(G, 0);
+    // Jump the story to its driving stage, with the Plaza in frame:
+    // the car rolls north up 4th avenue toward the marker.
+    G.mission.stage = 2;
+    G.mission.target = plaza.marker;
+    G.mission.targetLabel = 'Drive to Plaza del Sol';
+    G.dialogue.active = false;
+    G.toastT = 0;
+    G.toastText = '';
+    const car = makeCar({
+      x: 1120,
+      y: 1260,
+      angle: -Math.PI / 2,
+      color: '#d84a3a',
+      name: 'Coupe',
+      kind: 'civil',
+    });
+    car.driver = 'player';
+    car.owned = true;
+    car.speed = 200;
+    G.cars.push(car);
+    G.player.inCar = car;
+    G.player.x = car.x;
+    G.player.y = car.y;
+    G.camera.x = car.x;
+    G.camera.y = car.y;
+    return;
+  }
+  if (name === 'chase') {
+    G.state = 'playing';
+    G.clock = 18 * 60 + 30; // dusk
+    G.mission.targetLabel = 'Lose the police!';
+    const car = makeCar({
+      x: 1400,
+      y: 1120,
+      angle: -Math.PI / 2,
+      color: '#d84a3a',
+      name: 'Coupe',
+      kind: 'civil',
+    });
+    car.driver = 'player';
+    car.owned = true;
+    car.speed = 320;
+    G.cars.push(car);
+    G.player.inCar = car;
+    G.player.x = car.x;
+    G.player.y = car.y;
+    G.wanted = 3;
+    G.lastCrimeAt = G.time;
+    G.audio.startSiren(true);
+    const spots = [
+      { x: 1180, y: 900, angle: -0.4 },
+      { x: 1620, y: 900, angle: Math.PI + 0.4 },
+      { x: 1400, y: 1400, angle: Math.PI / 2 },
+    ];
+    for (const s of spots) {
+      const cruiser = makeCar({ x: s.x, y: s.y, angle: s.angle, color: '#24344d', name: 'Cruiser', kind: 'police', driver: 'police' });
+      cruiser.health = 120;
+      cruiser.speed = 380;
+      G.cars.push(cruiser);
+    }
+    for (let i = 0; i < 8; i++) {
+      G.skids.push({ x: 1400 - i * 18, y: 1120 + i * 8, angle: -Math.PI / 2 + 0.2, life: 5 });
+    }
+    G.camera.x = car.x;
+    G.camera.y = car.y;
+    return;
+  }
 }

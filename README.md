@@ -40,6 +40,6 @@ Then open http://localhost:8080 — the game loads from `game/` and plays offlin
 
 ## Screenshots
 
-Four real renders of the game itself, in `screenshots/` (the first by name is the cover): the title screen, Rio on foot at rush hour, Mission 1 in progress, and a dusk police chase. Reproduce them with `?shot=start|play|mission|chase&seed=20261120` on the game URL.
+Four real renders of the game itself, in `screenshots/` (the first by name is the cover): a dusk police chase, Rio on foot at Plaza del Sol, Mission 1 in progress, and a second chase angle. Reproduce them with `?shot=chase|play|mission&seed=1` (or `seed=7` for the fourth) on the game URL.
 
 Built with make.fun — try it yourself: https://make.fun/r/k7ew9786 (referral code k7ew9786)

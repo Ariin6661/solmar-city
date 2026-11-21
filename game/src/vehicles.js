@@ -1,190 +1,113 @@
-// Cars: creation, parking, player driving physics and collisions.
-import { CFG, AVE_X, ST_Y, CAR_COLORS } from './config.js';
-import { resolveCircle } from './world.js';
-import { sfx } from './audio.js';
+// Solmar City — cars: physics, collisions and skid marks.
+// One car shape for everything: the player's ride, traffic, taxis and
+// police cruisers. Only the driver differs.
+import { WORLD, TUNE, PALETTE } from './config.js';
 
-let nextCarId = 1;
+export const CAR_LEN = 46;
+export const CAR_WID = 22;
 
-export function makeCar(G, x, y, angle, color, kind) {
+let carSeq = 0;
+
+export function makeCar(opts) {
+  carSeq++;
   return {
-    id: nextCarId++,
-    x, y, angle,
+    id: carSeq,
+    x: opts.x,
+    y: opts.y,
+    angle: opts.angle || 0,
     speed: 0,
+    color: opts.color || PALETTE.car[carSeq % PALETTE.car.length],
+    name: opts.name || 'Sedan',
+    kind: opts.kind || 'civil',
+    health: 100,
+    wrecked: false,
+    parked: !!opts.parked,
+    driver: opts.driver || null, // 'player' | 'traffic' | 'police' | null
     steer: 0,
-    len: 48,
-    wid: 24,
-    color: color || CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
-    kind: kind || 'parked', // parked | traffic | player | police
-    driver: null,
-    crashed: 0, // cooldown before the next crash sound
   };
 }
 
-export function carFront(car) {
-  return {
-    x: car.x + Math.cos(car.angle) * (car.len / 2),
-    y: car.y + Math.sin(car.angle) * (car.len / 2),
-  };
-}
-
-export function carRear(car) {
-  return {
-    x: car.x - Math.cos(car.angle) * (car.len / 2),
-    y: car.y - Math.sin(car.angle) * (car.len / 2),
-  };
-}
-
-// Parked cars along road edges, clear of intersections and landmarks.
-export function spawnParkedCars(G, count) {
-  const rng = G.rng;
-  let placed = 0;
-  let guard = 0;
-  while (placed < count && guard++ < 400) {
-    const vertical = rng.chance(0.5);
-    const idx = vertical ? rng.int(0, CFG.AVES - 1) : rng.int(0, CFG.STS - 1);
-    const along = rng.range(120, vertical ? CFG.WORLD_H - 420 : CFG.WORLD_W - 120);
-    const side = rng.chance(0.5) ? 1 : -1;
-    const x = vertical ? AVE_X(idx) + side * 26 : along;
-    const y = vertical ? along : ST_Y(idx) + side * 26;
-    if (y > CFG.BEACH_Y - 60) continue; // keep the beach clear
-    const angle = vertical ? (side > 0 ? Math.PI / 2 : -Math.PI / 2) : (side > 0 ? 0 : Math.PI);
-    // Keep clear of intersections.
-    const nearCross = vertical
-      ? [...Array(CFG.STS)].some((_, j) => Math.abs(y - ST_Y(j)) < 90)
-      : [...Array(CFG.AVES)].some((_, i) => Math.abs(x - AVE_X(i)) < 90);
-    if (nearCross) continue;
-    if (G.cars.some((c) => Math.hypot(c.x - x, c.y - y) < 70)) continue;
-    G.cars.push(makeCar(G, x, y, angle, null, 'parked'));
-    placed++;
+// Move a car the player drives. Returns an impact speed when it hits
+// something hard, so the caller can shake the camera and play a sound.
+export function drivePlayer(car, ix, iy, handbrake, dt, world, skids) {
+  const forward = Math.cos(car.angle);
+  const side = Math.sin(car.angle);
+  const along = ix * forward + iy * side;
+  if (along > 0.1) car.speed += TUNE.carAccel * dt;
+  else if (along < -0.1) car.speed -= (car.speed > 5 ? TUNE.carAccel * 0.7 : TUNE.carReverse) * dt;
+  else {
+    car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 220 * dt);
   }
-}
-
-// Nearest car to a point within radius r (any kind, or one kind).
-export function nearestCar(G, x, y, r, kind) {
-  let best = null;
-  let bestD = r;
-  for (const c of G.cars) {
-    if (kind && c.kind !== kind) continue;
-    const d = Math.hypot(c.x - x, c.y - y);
-    if (d < bestD) {
-      bestD = d;
-      best = c;
-    }
+  car.speed = Math.max(-140, Math.min(TUNE.carMax, car.speed));
+  const turn = ix * side - iy * forward; // steering input, -1..1
+  const grip = handbrake ? TUNE.handbrakeGrip : TUNE.carGrip;
+  const steerRate = TUNE.carTurn * Math.min(1, Math.abs(car.speed) / 120) * (handbrake ? 1.5 : 1);
+  car.angle += turn * steerRate * Math.sign(car.speed) * dt;
+  const slide = (handbrake && Math.abs(car.speed) > 120) || (Math.abs(turn) > 0.6 && Math.abs(car.speed) > 300);
+  const moveAngle = slide ? car.angle + turn * 0.35 : car.angle;
+  const nx = car.x + Math.cos(moveAngle) * car.speed * dt;
+  const ny = car.y + Math.sin(moveAngle) * car.speed * dt;
+  let impact = 0;
+  if (!world.blockedAt(nx, car.y, 15)) car.x = nx;
+  else impact = Math.abs(car.speed);
+  if (!world.blockedAt(car.x, ny, 15)) car.y = ny;
+  else impact = Math.max(impact, Math.abs(car.speed));
+  if (impact > 60) car.speed *= 0.35;
+  if (slide && skids) {
+    skids.push({ x: car.x, y: car.y, angle: car.angle, life: 5 });
+    if (skids.length > 220) skids.shift();
   }
-  return best;
+  car.speed *= Math.pow(handbrake ? 0.4 : 0.92, dt * 4);
+  return impact;
 }
 
-// One driving step for a car driven by the player (input axes) or by
-// an autopilot (traffic/police pass their own throttle/steer).
-// throttle: -1..1, steer: -1..1, handbrake: bool.
-export function stepCarDrive(G, car, dt, throttle, steer, handbrake) {
-  const prevSpeed = car.speed;
-  // Steering: sharper at low speed, reversed when reversing.
-  const speedFactor = Math.min(1, Math.abs(car.speed) / 140);
-  const dirSign = car.speed >= 0 ? 1 : -1;
-  car.angle += steer * CFG.CAR_TURN * speedFactor * dirSign * dt * (handbrake ? 1.5 : 1);
-  // Throttle and drag.
-  if (throttle > 0) car.speed += CFG.CAR_ACCEL * throttle * dt;
-  else if (throttle < 0) car.speed += CFG.CAR_ACCEL * throttle * 0.55 * dt;
-  else car.speed -= car.speed * (handbrake ? 2.6 : 0.9) * dt;
-  if (handbrake) car.speed -= car.speed * 2.2 * dt;
-  // Rolling drag.
-  car.speed -= car.speed * 0.25 * dt;
-  if (car.speed > CFG.CAR_MAX) car.speed = CFG.CAR_MAX;
-  if (car.speed < -CFG.CAR_REV) car.speed = -CFG.CAR_REV;
-  if (Math.abs(car.speed) < 4 && throttle === 0) car.speed = 0;
-  // Move.
-  car.x += Math.cos(car.angle) * car.speed * dt;
-  car.y += Math.sin(car.angle) * car.speed * dt;
-  // Buildings and map edge.
-  const res = resolveCircle(G.world, car.x, car.y, 22);
-  if (res.hit) {
-    const impact = Math.abs(car.speed);
-    car.x = res.x;
-    car.y = res.y;
-    car.speed *= 0.45;
-    if (impact > 200 && car.crashed <= 0) {
-      car.crashed = 0.6;
-      sfx(G.audio, 'crash');
-      G.cam.shake = Math.min(10, impact / 60);
-      if (car.kind === 'player') damagePlayerCar(G, impact);
-    }
-  }
-  if (car.crashed > 0) car.crashed -= dt;
-  // Skid marks while handbraking at speed.
-  if (handbrake && Math.abs(car.speed) > 120) {
-    const rear = carRear(car);
-    G.skids.push({ x: rear.x, y: rear.y, angle: car.angle, life: 5 });
-    if (G.skids.length > 220) G.skids.splice(0, G.skids.length - 220);
-  }
-  return prevSpeed;
+// Drive a car toward a point (police chase, scripted moves).
+export function driveToward(car, tx, ty, maxSpeed, dt, world) {
+  const dx = tx - car.x;
+  const dy = ty - car.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const want = Math.atan2(dy, dx);
+  let diff = want - car.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
+  car.speed = Math.min(maxSpeed, car.speed + TUNE.policeAccel * dt);
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  if (!world.blockedAt(nx, car.y, 15)) car.x = nx;
+  else car.speed *= 0.5;
+  if (!world.blockedAt(car.x, ny, 15)) car.y = ny;
+  else car.speed *= 0.5;
+  return dist;
 }
 
-// Hard impacts hurt the driver.
-export function damagePlayerCar(G, impact) {
-  const dmg = Math.round((impact - 180) / 40);
-  if (dmg > 0) damagePlayer(G, dmg, 'crash');
-}
-
-export function damagePlayer(G, dmg, src) {
-  if (G.mode !== 'playing' || G.player.invuln > 0) return;
-  G.player.hp -= dmg;
-  G.player.invuln = 0.25;
-  G.cam.shake = Math.max(G.cam.shake, 6);
-  if (G.player.hp <= 0) {
-    G.player.hp = 0;
-    gameOver(G, src);
-  }
-}
-
-export function gameOver(G, src) {
-  G.mode = 'gameover';
-  G.deathCause = src || 'unknown';
-  if (G.player.car) {
-    G.player.car.kind = 'parked';
-    G.player.car.speed = 0;
-    G.player.car = null;
-  }
-  G.wanted = 0;
-  G.cops.length = 0;
-}
-
-// Car-vs-car bumps: push apart, trade speed, thud on hard hits.
-export function collideCars(G, car, dt) {
-  for (const other of G.cars) {
-    if (other === car) continue;
-    const dx = other.x - car.x;
-    const dy = other.y - car.y;
-    const d = Math.hypot(dx, dy);
-    const min = 36;
-    if (d < min && d > 0.01) {
-      const push = (min - d) / 2;
-      const nx = dx / d;
-      const ny = dy / d;
-      car.x -= nx * push;
-      car.y -= ny * push;
-      other.x += nx * push;
-      other.y += ny * push;
-      const rel = Math.abs(car.speed - other.speed);
-      if (rel > 140 && car.crashed <= 0) {
-        car.crashed = 0.5;
-        sfx(G.audio, 'crash');
-        G.cam.shake = Math.min(9, rel / 50);
-        if (car.kind === 'player') damagePlayerCar(G, rel);
+// Push overlapping cars apart and trade a little speed. Returns the
+// hardest impact this frame, for sound and shake.
+export function collideCars(cars) {
+  let hardest = 0;
+  for (let i = 0; i < cars.length; i++) {
+    for (let j = i + 1; j < cars.length; j++) {
+      const a = cars[i];
+      const b = cars[j];
+      if (a.wrecked || b.wrecked) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 0.01 && d < 34) {
+        const push = (34 - d) / 2;
+        const nx = dx / d;
+        const ny = dy / d;
+        a.x -= nx * push;
+        a.y -= ny * push;
+        b.x += nx * push;
+        b.y += ny * push;
+        const hit = Math.abs(a.speed - b.speed) + 40;
+        if (hit > hardest) hardest = hit;
+        const avg = (a.speed + b.speed) / 2;
+        a.speed = avg * 0.6;
+        b.speed = avg * 0.6;
       }
-      // Trade a little speed so shunts feel physical.
-      const avg = (car.speed + other.speed) / 2;
-      car.speed += (avg - car.speed) * 0.4;
-      if (other.kind !== 'player') other.speed += (avg - other.speed) * 0.4;
     }
   }
-}
-
-// All cars the player could drive, nearest first.
-export function drivableCars(G, x, y) {
-  return G.cars
-    .filter((c) => c.kind === 'parked' || c.kind === 'traffic')
-    .map((c) => ({ car: c, d: Math.hypot(c.x - x, c.y - y) }))
-    .sort((a, b) => a.d - b.d)
-    .map((e) => e.car);
+  return hardest;
 }

@@ -1,54 +1,29 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Solmar City — an open-world crime game</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Solmar City: an original 2D top-down open-world crime game. Explore a coastal city on foot and by car, outrun the police, and finish Rio Vega's story.">
-<link rel="icon" href="data:,">
+<meta name="theme-color" content="#101318">
+<title>Solmar City — an open-world crime game</title>
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #0c0e12;
-    color: #f2efe6;
-    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  }
-  #wrap {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 12px;
-    box-sizing: border-box;
+    overflow: hidden;
+    background: #101318;
+    height: 100%;
   }
   canvas {
-    width: min(1280px, 96vw);
-    height: auto;
-    aspect-ratio: 16 / 9;
-    background: #1a1e24;
-    border: 2px solid #2c313a;
-    border-radius: 6px;
     display: block;
+    width: 100vw;
+    height: 100vh;
+    cursor: crosshair;
   }
-  #hint {
-    margin: 0;
-    font-size: 13px;
-    color: #9aa0a8;
-    text-align: center;
-    max-width: 1280px;
-  }
-  #hint b { color: #f2c14e; }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <canvas id="game" width="1280" height="720"></canvas>
-  <p id="hint"><b>SOLMAR CITY</b> — WASD move / drive · E enter car · Space handbrake · Click shoot · F punch · R reload · P pause · M music · N next mission</p>
-  <noscript><p id="hint">Solmar City needs JavaScript to play.</p></noscript>
-</div>
+<canvas id="game"></canvas>
+<noscript><p style="color:#fff;font-family:sans-serif">Solmar City needs JavaScript to run.</p></noscript>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

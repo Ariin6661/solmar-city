@@ -1,281 +1,200 @@
-// Story missions, taxi fares and the ten hidden packages.
-import { CFG, ST_Y, LANDMARKS } from './config.js';
+// Solmar City — the four-mission story, taxi fares and the HUD's
+// objective line. Missions are small state machines: each stage names
+// a target point, and reaching it moves the story on.
+import { MISSIONS, TUNE } from './config.js';
 import { spawnEnemy } from './combat.js';
-import { sfx } from './audio.js';
-import { syncSaveToGame, storeSave } from './save.js';
-
-export const MISSION_DEFS = [
-  {
-    id: 0,
-    name: 'Borrowed Wheels',
-    reward: 500,
-    intro: "Mara: Rio! You're back. I need wheels — borrow any car and bring it to my garage.",
-    brief: 'Steal any car',
-  },
-  {
-    id: 1,
-    name: 'The Pickup',
-    reward: 800,
-    intro: "Mara: Dario is waiting by The Meridian. Pick him up and bring him to the garage. Don't keep him waiting.",
-    brief: 'Pick up Dario at The Meridian',
-  },
-  {
-    id: 2,
-    name: 'Beat the Clock',
-    reward: 1200,
-    intro: 'Mara: A package for the docks, and the buyer leaves in 90 seconds. Drive like you mean it.',
-    brief: 'Deliver the package to Dockside Yards in 90 seconds',
-  },
-  {
-    id: 3,
-    name: 'Dockside Standoff',
-    reward: 2000,
-    intro: "Mara: The Vultures took the docks. Four of them, armed. End it, Rio — then Solmar is ours again.",
-    brief: 'Clear the Dockside Yards of the Vulture crew',
-  },
-];
-
-const GARAGE = LANDMARKS[0];
-const MERIDIAN = LANDMARKS[2];
-const DOCKS = LANDMARKS[4];
 
 export function makeMissionState() {
   return {
-    idx: -1, // -1: no story mission active
+    index: -1, // -1: no mission running
     stage: 0,
-    target: null, // {x, y, label}
     timer: 0,
-    killsNeeded: 0,
-    kills: 0,
-    passenger: false,
-    active: false,
+    target: null,
+    targetLabel: '',
+    checkpoints: [],
+    checkpoint: 0,
+    passenger: null,
+    done: [],
   };
 }
 
-export function makeTaxiState() {
-  return {
-    state: 'none', // none | waiting | riding
-    ped: null, // the fare, standing at the kerb
-    dest: null, // {x, y}
-    fare: 0,
-    waitT: 0,
-    cooldown: 6,
-  };
+function landmark(G, name) {
+  return G.world.landmarks.find((l) => l.name === name);
 }
 
-export function setDialogue(G, name, text, seconds) {
-  G.dialogue = { name, text, t: seconds || 5 };
-}
-
-export function startMission(G, idx) {
-  const def = MISSION_DEFS[idx];
-  if (!def) return;
-  const M = G.mission;
-  M.idx = idx;
-  M.stage = 0;
-  M.kills = 0;
-  M.killsNeeded = 0;
-  M.passenger = false;
-  M.active = true;
-  if (idx === 0) {
-    M.target = null; // stage 0: just steal a car
-  } else if (idx === 1) {
-    M.target = { x: MERIDIAN.frontX, y: MERIDIAN.frontY, label: 'Pick up Dario' };
-  } else if (idx === 2) {
-    M.timer = 90;
-    M.target = { x: DOCKS.frontX, y: DOCKS.frontY, label: 'Dockside delivery' };
-  } else if (idx === 3) {
-    M.target = { x: DOCKS.frontX, y: DOCKS.frontY, label: 'Dockside Yards' };
+export function startMission(G, index) {
+  const def = MISSIONS[index];
+  const m = G.mission;
+  m.index = index;
+  m.stage = 0;
+  m.timer = 0;
+  m.checkpoints = [];
+  m.checkpoint = 0;
+  m.passenger = null;
+  if (index === 0) {
+    m.target = landmark(G, "Mara's Garage").marker;
+    m.targetLabel = "Go to Mara's Garage";
+  } else if (index === 1) {
+    m.target = landmark(G, 'The Meridian').marker;
+    m.targetLabel = 'Pick up the guest at The Meridian';
+  } else if (index === 2) {
+    m.checkpoints = ['Plaza del Sol', 'The Meridian', 'Solmar Pier', 'Dockside Yards', "Mara's Garage"]
+      .map((n) => landmark(G, n).marker);
+    m.timer = 90;
+    m.target = m.checkpoints[0];
+    m.targetLabel = 'Checkpoint 1 of 5 — 90 seconds!';
+  } else if (index === 3) {
+    m.target = landmark(G, 'Dockside Yards').marker;
+    m.targetLabel = 'Take back the Dockside Yards';
   }
-  setDialogue(G, 'Mara', def.intro, 6);
-  G.objective = def.brief;
-}
-
-function arriveAt(G, target, radius) {
-  const P = G.player;
-  const r = radius || 75;
-  return Math.hypot(P.x - target.x, P.y - target.y) < r;
-}
-
-export function updateMission(G, dt) {
-  const M = G.mission;
-  if (!M.active || G.mode !== 'playing') return;
-  const def = MISSION_DEFS[M.idx];
-
-  if (M.idx === 0) {
-    if (M.stage === 0) {
-      if (G.player.car) {
-        M.stage = 1;
-        M.target = { x: GARAGE.frontX, y: GARAGE.frontY, label: "Mara's Garage" };
-        G.objective = "Drive the car to Mara's Garage";
-        setDialogue(G, 'Mara', 'Good. Now bring it home — my garage, north side.', 4);
-      }
-    } else if (M.target && arriveAt(G, M.target)) {
-      completeMission(G);
-    }
-  } else if (M.idx === 1) {
-    if (M.stage === 0 && M.target && arriveAt(G, M.target)) {
-      M.stage = 1;
-      M.passenger = true;
-      M.target = { x: GARAGE.frontX, y: GARAGE.frontY, label: "Mara's Garage" };
-      G.objective = "Bring Dario back to Mara's Garage";
-      setDialogue(G, 'Dario', 'Finally. Mara owes me for this. Drive, Rio.', 4);
-      sfx(G.audio, 'pickup');
-    } else if (M.stage === 1 && M.target && arriveAt(G, M.target)) {
-      completeMission(G);
-    }
-  } else if (M.idx === 2) {
-    M.timer -= dt;
-    if (M.timer <= 0) {
-      failMission(G, 'Out of time — the buyer left without the package.');
-      return;
-    }
-    if (M.target && arriveAt(G, M.target)) {
-      completeMission(G);
-    }
-  } else if (M.idx === 3) {
-    if (M.stage === 0 && M.target && arriveAt(G, M.target)) {
-      M.stage = 1;
-      M.killsNeeded = 4;
-      M.kills = 0;
-      const d = DOCKS;
-      // Four Vultures on open ground: two on 6th Street, two in the
-      // yard gaps — never inside a container (bullets can't reach there).
-      const spots = [
-        { x: d.x + 50, y: ST_Y(6) - 10 },
-        { x: d.x + 176, y: ST_Y(6) + 10 },
-        { x: d.x + 50, y: d.y + d.h - 160 },
-        { x: d.x + 176, y: d.y + 160 },
-      ];
-      for (const s of spots) spawnEnemy(G, s.x, s.y);
-      G.objective = 'Defeat the Vulture crew (0/4)';
-      setDialogue(G, 'Vulture', 'Rio Vega! The boss wants you gone. Open fire!', 4);
-    } else if (M.stage === 1) {
-      M.kills = M.killsNeeded - G.enemies.length;
-      G.objective = `Defeat the Vulture crew (${M.kills}/${M.killsNeeded})`;
-      if (G.enemies.length === 0) completeMission(G);
-    }
-  }
+  G.dialogue = { lines: def.briefing, i: 0, active: true };
+  G.toast(`${def.title} — ${m.targetLabel}`);
 }
 
 export function completeMission(G) {
-  const M = G.mission;
-  const def = MISSION_DEFS[M.idx];
-  G.money += def.reward;
-  G.stats.earned += def.reward;
-  G.missionDone[M.idx] = true;
-  M.active = false;
-  M.target = null;
-  G.objective = '';
-  sfx(G.audio, 'missionPass');
-  setDialogue(G, 'Mara', `Mission passed — $${def.reward}. Solmar remembers, Rio.`, 5);
-  G.mode = 'passed';
-  G.passedMission = def;
-  saveProgress(G);
+  const def = MISSIONS[G.mission.index];
+  G.player.money += def.reward;
+  G.mission.done.push(def.id);
+  G.save.missionsDone = [...G.mission.done];
+  G.save.money = G.player.money;
+  G.save.bestMoney = Math.max(G.save.bestMoney, G.player.money);
+  G.saveDirty = true;
+  G.audio.missionDone();
+  G.player.health = Math.min(TUNE.playerHealth, G.player.health + 25);
+  G.mission.index = -1;
+  G.mission.target = null;
+  G.mission.targetLabel = '';
+  G.state = 'passed';
+  G.passedTitle = `${def.title} — complete!`;
+  G.passedReward = def.reward;
 }
 
-export function failMission(G, reason) {
-  const M = G.mission;
-  M.active = false;
-  M.target = null;
-  G.objective = '';
-  sfx(G.audio, 'missionFail');
-  G.mode = 'failed';
-  G.failReason = reason;
-  G.failedMission = M.idx;
+function near(G, target, radius) {
+  const p = G.player;
+  const x = p.inCar ? p.inCar.x : p.x;
+  const y = p.inCar ? p.inCar.y : p.y;
+  return Math.hypot(target.x - x, target.y - y) < radius;
 }
 
-export function saveProgress(G) {
-  syncSaveToGame(G.save, G);
-  storeSave(G.save);
+export function stepMissions(G, dt) {
+  const m = G.mission;
+  if (m.index < 0) {
+    // No story mission: maybe a taxi fare is waiting.
+    maybeTaxi(G, dt);
+    return;
+  }
+  if (m.index === 0) {
+    if (m.stage === 0 && near(G, m.target, 70)) {
+      m.stage = 1;
+      m.target = null;
+      m.targetLabel = 'Steal a car — press E next to one';
+      G.toast('MARA: Any car will do. Take one.');
+    } else if (m.stage === 1 && G.player.inCar) {
+      m.stage = 2;
+      m.target = landmark(G, 'Plaza del Sol').marker;
+      m.targetLabel = 'Drive to Plaza del Sol';
+    } else if (m.stage === 2 && near(G, m.target, 80)) {
+      completeMission(G);
+    }
+  } else if (m.index === 1) {
+    if (m.stage === 0 && near(G, m.target, 70)) {
+      if (!G.player.inCar) {
+        m.targetLabel = 'You need a car for the pickup — press E';
+      } else {
+        m.stage = 1;
+        m.passenger = true;
+        m.target = landmark(G, 'Dockside Yards').marker;
+        m.targetLabel = 'Take the guest to the Dockside Yards';
+        G.toast('GUEST: The yards. And drive smoothly, please.');
+      }
+    } else if (m.stage === 1 && near(G, m.target, 80)) {
+      m.passenger = null;
+      completeMission(G);
+    }
+  } else if (m.index === 2) {
+    m.timer -= dt;
+    m.targetLabel = `Checkpoint ${m.checkpoint + 1} of 5 — ${Math.max(0, Math.ceil(m.timer))}s left`;
+    if (m.timer <= 0) {
+      G.mission.index = -1;
+      G.mission.target = null;
+      G.toast('Out of time. Mara is not impressed. Press N to retry.');
+      return;
+    }
+    if (near(G, m.target, 70)) {
+      m.checkpoint++;
+      if (m.checkpoint >= m.checkpoints.length) {
+        completeMission(G);
+      } else {
+        m.target = m.checkpoints[m.checkpoint];
+        G.audio.pickup();
+      }
+    }
+  } else if (m.index === 3) {
+    if (m.stage === 0 && near(G, m.target, 90)) {
+      m.stage = 1;
+      const yard = landmark(G, 'Dockside Yards');
+      const spots = [
+        { x: yard.x - 120, y: yard.y - 60 },
+        { x: yard.x + 100, y: yard.y - 80 },
+        { x: yard.x - 60, y: yard.y + 90 },
+        { x: yard.x + 140, y: yard.y + 60 },
+      ];
+      for (const s of spots) spawnEnemy(G, s.x, s.y);
+      m.targetLabel = 'Take down all four gunmen';
+      G.toast('Four gunmen. Make it count, Rio.');
+    } else if (m.stage === 1 && G.enemies.every((e) => e.dead)) {
+      m.stage = 2;
+      m.target = landmark(G, "Mara's Garage").marker;
+      m.targetLabel = 'Yard is yours — head home to the garage';
+    } else if (m.stage === 2 && near(G, m.target, 80)) {
+      completeMission(G);
+    }
+  }
 }
 
-// --- Taxi fares: pick up a waving fare, drop them off, get paid. ---
-
-export function updateTaxi(G, dt) {
-  const T = G.taxi;
-  const P = G.player;
-  T.cooldown -= dt;
-  if (T.state === 'none') {
-    // A fare appears when you're driving and no mission needs the road.
-    if (P.car && T.cooldown <= 0 && G.rng.chance(dt * 0.08)) {
-      const spot = { x: P.x + G.rng.range(-320, 320), y: P.y + G.rng.range(-320, 320) };
-      const res = { x: Math.max(90, Math.min(spot.x, CFG.WORLD_W - 90)), y: Math.max(90, Math.min(spot.y, CFG.BEACH_Y - 90)) };
-      const ped = { x: res.x, y: res.y, angle: 0, state: 'fare', color: '#7ee787', walkPhase: 0, down: false, tx: res.x, ty: res.y, retarget: 99, fleeT: 0, downTimer: 0 };
-      T.ped = ped;
-      T.state = 'waiting';
-      T.waitT = 25;
-      G.peds.push(ped);
-      setDialogue(G, 'Fare', 'Taxi! Over here — I need a ride across town.', 4);
+function maybeTaxi(G, dt) {
+  const t = G.taxi;
+  if (t.offer && !t.rider) {
+    // A pedestrian flagged a ride: drive up to them.
+    const inCar = G.player.inCar;
+    const cd = inCar ? Math.hypot(t.offer.x - inCar.x, t.offer.y - inCar.y) : Infinity;
+    if (inCar && cd < 60) {
+      t.rider = t.offer;
+      t.offer = null;
+      t.dest = G.world.landmarks[Math.floor(Math.random() * G.world.landmarks.length)].marker;
+      t.fare = Math.floor(TUNE.taxiFareMin + Math.random() * (TUNE.taxiFareMax - TUNE.taxiFareMin));
+      G.peds = G.peds.filter((p) => p !== t.rider);
+      G.toast(`Passenger aboard — take them to the marker. Fare $${t.fare}.`);
+    } else if (Math.hypot(t.offer.x - G.player.x, t.offer.y - G.player.y) > 700) {
+      t.offer.taxi = false;
+      t.offer = null;
     }
     return;
   }
-  if (T.state === 'waiting') {
-    T.waitT -= dt;
-    if (T.waitT <= 0) {
-      // The fare gave up and walked off.
-      removeFarePed(G);
-      T.state = 'none';
-      T.cooldown = 12;
-      return;
-    }
-    if (P.car && Math.hypot(P.x - T.ped.x, P.y - T.ped.y) < 56 && Math.abs(P.car.speed) < 40) {
-      // They hop in: pick a destination on the far side of town.
-      removeFarePed(G);
-      const dest = { x: G.rng.range(300, CFG.WORLD_W - 300), y: G.rng.range(300, CFG.BEACH_Y - 200) };
-      T.dest = dest;
-      T.fare = Math.round(60 + Math.hypot(dest.x - P.x, dest.y - P.y) / 12);
-      T.state = 'riding';
-      setDialogue(G, 'Fare', 'Thanks! Take me to the marker — and step on it.', 4);
-      sfx(G.audio, 'pickup');
-    }
-  } else if (T.state === 'riding') {
-    if (Math.hypot(P.x - T.dest.x, P.y - T.dest.y) < 70) {
-      G.money += T.fare;
-      G.stats.earned += T.fare;
+  if (t.rider) {
+    if (near(G, t.dest, 70)) {
+      G.player.money += t.fare;
       G.stats.fares++;
-      setDialogue(G, 'Fare', `Perfect stop. Keep the change — $${T.fare}.`, 4);
-      sfx(G.audio, 'cash');
-      T.state = 'none';
-      T.dest = null;
-      T.cooldown = CFG.TAXI_COOLDOWN_S;
-      saveProgress(G);
+      G.save.fares = G.stats.fares;
+      G.save.money = G.player.money;
+      G.saveDirty = true;
+      G.audio.pickup();
+      G.toast(`Fare complete! +$${t.fare}`);
+      t.rider = null;
+      t.dest = null;
+    }
+    return;
+  }
+  // Offer a fare now and then while driving around with nothing to do.
+  if (G.player.inCar && Math.random() < dt * 0.02) {
+    const close = G.peds.filter((p) => {
+      const d = Math.hypot(p.x - G.player.x, p.y - G.player.y);
+      return d > 60 && d < 320 && p.down <= 0;
+    });
+    if (close.length > 0) {
+      t.offer = close[0];
+      t.offer.taxi = true;
+      G.toast('Someone is flagging a taxi — drive up to them.');
     }
   }
-}
-
-function removeFarePed(G) {
-  const T = G.taxi;
-  if (!T.ped) return;
-  const i = G.peds.indexOf(T.ped);
-  if (i >= 0) G.peds.splice(i, 1);
-  T.ped = null;
-}
-
-// --- Hidden packages: walk or drive over one to collect it. ---
-
-export function checkPackages(G) {
-  const P = G.player;
-  for (const pkg of G.world.pkgSpots) {
-    if (pkg.taken) continue;
-    if (Math.hypot(P.x - pkg.x, P.y - pkg.y) < 30) {
-      pkg.taken = true;
-      G.money += 150;
-      G.stats.earned += 150;
-      G.stats.packages = (G.stats.packages || 0) + 1;
-      setDialogue(G, 'Rio', 'A hidden package — $150. The old crew stashed these everywhere.', 4);
-      sfx(G.audio, 'pickup');
-      saveProgress(G);
-    }
-  }
-}
-
-// One-line objective for the HUD, from whatever is active.
-export function objectiveText(G) {
-  if (G.mission.active) return G.objective;
-  if (G.taxi.state === 'riding') return 'Drop the fare at the green marker';
-  if (G.taxi.state === 'waiting') return 'A fare is waving — pick them up';
-  const next = G.missionDone.findIndex((d) => !d);
-  if (next >= 0) return 'Press N to start the next story mission';
-  return 'Free roam — Solmar is yours. Find packages, drive fares, stay out of trouble.';
 }

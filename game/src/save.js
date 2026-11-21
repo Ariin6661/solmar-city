@@ -1,70 +1,50 @@
-// Save / load to localStorage. Progress that survives a reload:
-// money, which story missions are done, packages collected, best stats.
-import { CFG } from './config.js';
+// Solmar City — save game in localStorage.
+// Money, finished missions, found packages and best stats survive a
+// reload. Everything is guarded: a browser without storage just plays
+// without saving.
+const KEY = 'solmar-city-save-v1';
 
 export function defaultSave() {
   return {
-    money: 250,
-    missionsDone: [false, false, false, false],
-    packagesTaken: [],
-    best: { earned: 0, fares: 0, kills: 0 },
+    money: 0,
+    missionsDone: [],
+    packagesFound: [],
+    bestMoney: 0,
+    kills: 0,
+    fares: 0,
   };
 }
 
 export function loadSave() {
   try {
-    const raw = window.localStorage.getItem(CFG.SAVE_KEY);
+    const raw = window.localStorage.getItem(KEY);
     if (!raw) return defaultSave();
     const data = JSON.parse(raw);
-    const base = defaultSave();
-    return {
-      money: typeof data.money === 'number' ? data.money : base.money,
-      missionsDone: Array.isArray(data.missionsDone) && data.missionsDone.length === 4
-        ? data.missionsDone.map(Boolean)
-        : base.missionsDone,
-      packagesTaken: Array.isArray(data.packagesTaken) ? data.packagesTaken : base.packagesTaken,
-      best: { ...base.best, ...(data.best || {}) },
-    };
-  } catch (e) {
+    const clean = defaultSave();
+    if (typeof data.money === 'number') clean.money = data.money;
+    if (Array.isArray(data.missionsDone)) clean.missionsDone = data.missionsDone.filter((m) => typeof m === 'string');
+    if (Array.isArray(data.packagesFound)) clean.packagesFound = data.packagesFound.filter((p) => typeof p === 'string');
+    if (typeof data.bestMoney === 'number') clean.bestMoney = data.bestMoney;
+    if (typeof data.kills === 'number') clean.kills = data.kills;
+    if (typeof data.fares === 'number') clean.fares = data.fares;
+    return clean;
+  } catch (err) {
     return defaultSave();
   }
 }
 
-export function storeSave(save) {
+export function writeSave(data) {
   try {
-    window.localStorage.setItem(CFG.SAVE_KEY, JSON.stringify(save));
-  } catch (e) {
-    // Storage full or blocked (private mode): the game plays on anyway.
+    window.localStorage.setItem(KEY, JSON.stringify(data));
+  } catch (err) {
+    // Storage unavailable (private mode, file://) — play on unsaved.
   }
 }
 
-// Copy the live game state back into the save object.
-export function syncSaveToGame(save, G) {
-  save.money = Math.round(G.money);
-  save.missionsDone = G.missionDone.slice();
-  save.packagesTaken = G.world.pkgSpots
-    .map((p, i) => (p.taken ? i : -1))
-    .filter((i) => i >= 0);
-  save.best.earned = Math.max(save.best.earned, G.stats.earned);
-  save.best.fares = Math.max(save.best.fares, G.stats.fares);
-  save.best.kills = Math.max(save.best.kills, G.stats.kills);
-}
-
-export function applySaveToGame(G, save) {
-  G.money = save.money;
-  G.missionDone = save.missionsDone.slice();
-  save.packagesTaken.forEach((i) => {
-    if (G.world.pkgSpots[i]) G.world.pkgSpots[i].taken = true;
-  });
-  G.stats.best = { ...save.best };
-}
-
-// Clear the save (used from the pause menu: hold-to-confirm in game).
-export function wipeSave() {
+export function clearSave() {
   try {
-    window.localStorage.removeItem(CFG.SAVE_KEY);
-  } catch (e) {
+    window.localStorage.removeItem(KEY);
+  } catch (err) {
     // Nothing to clear.
   }
-  return defaultSave();
 }
